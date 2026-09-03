@@ -9,7 +9,7 @@ observers are separate boundaries, so each can be replaced without rewriting the
 
 ## What works now
 
-- OpenAI Responses API tool loop with stateless response replay
+- OpenAI Responses API plus Groq, Gemini, OpenRouter, and generic Chat Completions adapters
 - Structured task decomposition with dependency-aware step execution and retries
 - Workspace-scoped file listing, reading, search, creation, and exact replacement
 - Bounded shell execution with network and destructive-command policy checks
@@ -17,7 +17,7 @@ observers are separate boundaries, so each can be replaced without rewriting the
 - `SKILL.md` discovery, automatic routing, explicit `$skill-name` activation, and lazy loading
 - SQLite short-term conversation history, durable memories, hybrid local retrieval, and task episodes
 - JSONL lifecycle events for model calls, tool calls, plans, steps, MCP, and final outcomes
-- Interactive CLI, offline demo, diagnostics, memory inspection, and eight isolated tests
+- Interactive CLI, offline demo, diagnostics, memory inspection, and fourteen isolated tests
 
 ## Quick start
 
@@ -37,6 +37,13 @@ No API key is needed for the full offline smoke test:
 
 ```powershell
 axiom demo
+```
+
+Inside Codex Desktop on Windows, the bundled Python runtime can launch Axiom without installing
+anything first:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\axiom-local.ps1 demo
 ```
 
 On macOS/Linux, activate with `source .venv/bin/activate` and export the key with
@@ -69,6 +76,28 @@ The default model is `gpt-5.6-terra`; change it without editing the file by sett
 The OpenAI adapter uses the Responses API with custom function tools and `store=false`. The adapter
 replays response output items and function outputs so the core does not require server-side
 conversation storage. See the official [Responses API reference](https://developers.openai.com/api/reference/cli/resources/responses/methods/create).
+
+### Free-tier model providers
+
+Axiom has presets for three OpenAI-compatible services. Select one with `AXIOM_PROVIDER`; its
+endpoint, recommended model, and credential-variable name are filled in automatically.
+
+| Provider | Default model | Credential variable | Notes |
+| --- | --- | --- | --- |
+| `groq` | `qwen/qwen3.6-27b` | `GROQ_API_KEY` | Recommended for the first run; local tool use and parallel calls |
+| `gemini` | `gemini-3.1-flash-lite` | `GEMINI_API_KEY` | Free input/output tier; free-tier content may improve Google products |
+| `openrouter` | `openrouter/free` | `OPENROUTER_API_KEY` | Automatically routes to a currently free compatible model |
+
+Example using Groq:
+
+```powershell
+$env:GROQ_API_KEY = "your-key"
+$env:AXIOM_PROVIDER = "groq"
+.\axiom-local.ps1 run "inspect this repository and explain its architecture"
+```
+
+The optional overrides are `AXIOM_MODEL`, `AXIOM_BASE_URL`, `AXIOM_API_KEY_ENV`, and
+`AXIOM_MAX_OUTPUT_TOKENS`. Provider keys belong in environment variables, never in tracked TOML.
 
 ### MCP
 

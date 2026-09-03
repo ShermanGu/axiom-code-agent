@@ -9,6 +9,21 @@ from axiom_agent.config import load_config
 
 
 class ConfigTests(unittest.TestCase):
+    def test_groq_environment_preset_is_complete(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "axiom.toml"
+            config_path.write_text(
+                '[model]\nname = "gpt-5.6-terra"\nmax_output_tokens = 8192\n',
+                encoding="utf-8",
+            )
+            with patch.dict("os.environ", {"AXIOM_PROVIDER": "groq"}, clear=True):
+                config = load_config(config_path, workspace=directory)
+            self.assertEqual(config.model.provider, "groq")
+            self.assertEqual(config.model.name, "qwen/qwen3.6-27b")
+            self.assertEqual(config.model.api_key_env, "GROQ_API_KEY")
+            self.assertEqual(config.model.base_url, "https://api.groq.com/openai/v1")
+            self.assertEqual(config.model.max_output_tokens, 4096)
+
     def test_config_paths_are_relative_to_workspace(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             workspace = Path(directory)

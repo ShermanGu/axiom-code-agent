@@ -7,6 +7,28 @@ from pathlib import Path
 from typing import Any
 
 
+MODEL_PROVIDER_PRESETS: dict[str, dict[str, Any]] = {
+    "groq": {
+        "name": "qwen/qwen3.6-27b",
+        "base_url": "https://api.groq.com/openai/v1",
+        "api_key_env": "GROQ_API_KEY",
+        "max_output_tokens": 4096,
+    },
+    "gemini": {
+        "name": "gemini-3.1-flash-lite",
+        "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+        "api_key_env": "GEMINI_API_KEY",
+        "max_output_tokens": 4096,
+    },
+    "openrouter": {
+        "name": "openrouter/free",
+        "base_url": "https://openrouter.ai/api/v1",
+        "api_key_env": "OPENROUTER_API_KEY",
+        "max_output_tokens": 4096,
+    },
+}
+
+
 @dataclass(slots=True)
 class AgentConfig:
     name: str = "Axiom"
@@ -126,8 +148,29 @@ def load_config(
         workspace_values["root"] = Path(workspace_values["root"])
 
     model_values = dict(raw.get("model", {}))
+    if model_provider := os.getenv("AXIOM_PROVIDER"):
+        model_values["provider"] = model_provider
+        # A provider selected at runtime should not inherit another provider's
+        # endpoint, credential variable, or model unless explicitly overridden.
+        for key, environment_name in (
+            ("name", "AXIOM_MODEL"),
+            ("base_url", "AXIOM_BASE_URL"),
+            ("api_key_env", "AXIOM_API_KEY_ENV"),
+            ("max_output_tokens", "AXIOM_MAX_OUTPUT_TOKENS"),
+        ):
+            if not os.getenv(environment_name):
+                model_values.pop(key, None)
     if model_name := os.getenv("AXIOM_MODEL"):
         model_values["name"] = model_name
+    if base_url := os.getenv("AXIOM_BASE_URL"):
+        model_values["base_url"] = base_url
+    if api_key_env := os.getenv("AXIOM_API_KEY_ENV"):
+        model_values["api_key_env"] = api_key_env
+    if max_output_tokens := os.getenv("AXIOM_MAX_OUTPUT_TOKENS"):
+        model_values["max_output_tokens"] = int(max_output_tokens)
+    provider_name = str(model_values.get("provider", "openai"))
+    preset = MODEL_PROVIDER_PRESETS.get(provider_name, {})
+    model_values = {**preset, **model_values}
 
     memory_values = dict(raw.get("memory", {}))
     if "path" in memory_values:

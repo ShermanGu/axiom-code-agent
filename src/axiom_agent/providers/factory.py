@@ -7,12 +7,14 @@ from typing import Any
 from axiom_agent.config import ModelConfig
 from axiom_agent.providers.base import ModelProvider
 from axiom_agent.providers.demo import DemoProvider
-from axiom_agent.providers.openai import OpenAIResponsesProvider
+from axiom_agent.providers.openai import OpenAIChatProvider, OpenAIResponsesProvider
 
 
 def create_provider(config: ModelConfig) -> ModelProvider:
     if config.provider == "openai":
         return OpenAIResponsesProvider(config)
+    if config.provider in {"openai-chat", "groq", "gemini", "openrouter"}:
+        return OpenAIChatProvider(config)
     if config.provider == "demo":
         return DemoProvider()
     if ":" in config.provider:
@@ -24,6 +26,7 @@ def create_provider(config: ModelConfig) -> ModelProvider:
             raise TypeError(f"Custom provider {config.provider!r} did not return ModelProvider")
         return provider
     raise ValueError(
-        f"Unknown model provider {config.provider!r}. Use 'openai', 'demo', "
+        f"Unknown model provider {config.provider!r}. Use 'openai', 'openai-chat', "
+        "'groq', 'gemini', 'openrouter', 'demo', "
         "or a 'module:factory' plugin."
     )

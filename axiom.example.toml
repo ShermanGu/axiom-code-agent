@@ -6,6 +6,7 @@ planning = true
 auto_memory = true
 
 [model]
+# Also supported: groq, gemini, openrouter, openai-chat, or module:factory.
 provider = "openai"
 name = "gpt-5.6-terra"
 reasoning_effort = "medium"
@@ -35,4 +36,3 @@ max_active = 3
 # command = "npx"
 # args = ["-y", "@modelcontextprotocol/server-filesystem", "."]
 # tool_prefix = true
-

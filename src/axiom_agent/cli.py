@@ -59,7 +59,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="axiom", description="A modular code agent with MCP, skills, planning, and memory."
     )
-    parser.add_argument("--version", action="version", version="Axiom 0.1.0")
+    parser.add_argument("--version", action="version", version="Axiom 0.2.0")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     init_parser = subparsers.add_parser("init", help="Initialize Axiom in a workspace")
@@ -175,7 +175,10 @@ def _init_workspace(path: Path, force: bool) -> int:
         with gitignore.open("a", encoding="utf-8", newline="") as handle:
             handle.write(prefix + "\n".join(additions) + "\n")
     print(f"Initialized Axiom at {config_path}")
-    print("Next: set OPENAI_API_KEY, then run: axiom run \"inspect this repository\"")
+    print(
+        "Next: set a provider key and run Axiom. "
+        "For a free first run, set GROQ_API_KEY and AXIOM_PROVIDER=groq."
+    )
     return 0
 
 
