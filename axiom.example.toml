@@ -1,0 +1,38 @@
+[agent]
+name = "Axiom"
+max_turns = 20
+max_step_retries = 1
+planning = true
+auto_memory = true
+
+[model]
+provider = "openai"
+name = "gpt-5.6-terra"
+reasoning_effort = "medium"
+max_output_tokens = 8192
+
+[workspace]
+root = "."
+approval = "on-risk"
+command_timeout_seconds = 120
+max_command_output_chars = 30000
+allow_network = false
+
+[memory]
+path = ".axiom/memory.db"
+recent_messages = 12
+retrieval_limit = 8
+
+[skills]
+paths = [".axiom/skills", "examples/skills"]
+auto_select = true
+max_active = 3
+
+# Add as many MCP servers as needed. stdio and streamable_http are supported.
+# [[mcp.servers]]
+# name = "filesystem"
+# transport = "stdio"
+# command = "npx"
+# args = ["-y", "@modelcontextprotocol/server-filesystem", "."]
+# tool_prefix = true
+
