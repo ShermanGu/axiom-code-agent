@@ -11,6 +11,8 @@ provider = "openai"
 name = "gpt-5.6-terra"
 reasoning_effort = "medium"
 max_output_tokens = 8192
+# Comma-separated URLs or hostnames that should bypass system HTTP(S) proxies.
+no_proxy = ""
 
 [workspace]
 root = "."

@@ -29,6 +29,7 @@ provider = "openai"
 name = "gpt-5.6-terra"
 reasoning_effort = "medium"
 max_output_tokens = 8192
+no_proxy = ""
 
 [workspace]
 root = "."

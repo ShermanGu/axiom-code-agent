@@ -25,24 +25,10 @@ class OpenAIResponsesProvider(ModelProvider):
     def _client_instance(self) -> Any:
         if self._client is not None:
             return self._client
-        try:
-            from openai import OpenAI
-        except ImportError as exc:  # pragma: no cover - depends on installation
-            raise RuntimeError(
-                "The OpenAI provider requires the 'openai' package. "
-                "Install Axiom with: pip install -e ."
-            ) from exc
-
-        api_key = os.getenv(self.config.api_key_env)
-        if not api_key:
-            raise RuntimeError(
-                f"Missing {self.config.api_key_env}. Set it in your environment, "
-                "or run 'axiom demo' for the offline end-to-end demo."
-            )
-        kwargs: dict[str, Any] = {"api_key": api_key}
-        if self.config.base_url:
-            kwargs["base_url"] = self.config.base_url
-        self._client = OpenAI(**kwargs)
+        self._client = _create_client(
+            self.config,
+            "The OpenAI provider requires the 'openai' package. ",
+        )
         return self._client
 
     async def complete(self, request: ModelRequest) -> ModelResponse:
@@ -110,24 +96,10 @@ class OpenAIChatProvider(ModelProvider):
     def _client_instance(self) -> Any:
         if self._client is not None:
             return self._client
-        try:
-            from openai import OpenAI
-        except ImportError as exc:  # pragma: no cover - depends on installation
-            raise RuntimeError(
-                "This provider requires the 'openai' package. "
-                "Install Axiom with: pip install -e ."
-            ) from exc
-
-        api_key = os.getenv(self.config.api_key_env)
-        if not api_key:
-            raise RuntimeError(
-                f"Missing {self.config.api_key_env}. Set it in your environment, "
-                "or run 'axiom demo' for the offline end-to-end demo."
-            )
-        kwargs: dict[str, Any] = {"api_key": api_key}
-        if self.config.base_url:
-            kwargs["base_url"] = self.config.base_url
-        self._client = OpenAI(**kwargs)
+        self._client = _create_client(
+            self.config,
+            "This provider requires the 'openai' package. ",
+        )
         return self._client
 
     async def complete(self, request: ModelRequest) -> ModelResponse:
@@ -197,13 +169,38 @@ class OpenAIChatProvider(ModelProvider):
         )
 
 
+def _create_client(config: ModelConfig, missing_package_message: str) -> Any:
+    try:
+        from openai import DefaultHttpx2Client, OpenAI
+    except ImportError as exc:  # pragma: no cover - depends on installation
+        raise RuntimeError(
+            missing_package_message + "Install Axiom with: pip install -e ."
+        ) from exc
+
+    api_key = os.getenv(config.api_key_env)
+    if not api_key:
+        raise RuntimeError(
+            f"Missing {config.api_key_env}. Set it in your environment, "
+            "or run 'axiom demo' for the offline end-to-end demo."
+        )
+    kwargs: dict[str, Any] = {"api_key": api_key}
+    if config.base_url:
+        kwargs["base_url"] = config.base_url
+    if mounts := _no_proxy_mounts(config.no_proxy):
+        kwargs["http_client"] = DefaultHttpx2Client(mounts=mounts)
+    return OpenAI(**kwargs)
+
+
+def _no_proxy_mounts(value: str) -> dict[str, None]:
+    entries = (item.strip() for item in value.split(","))
+    return {entry if "://" in entry else f"all://{entry}": None for entry in entries if entry}
+
+
 def _chat_messages(items: list[Any]) -> list[dict[str, Any]]:
     messages: list[dict[str, Any]] = []
     for original in items:
         item = (
-            original.model_dump(exclude_none=True)
-            if hasattr(original, "model_dump")
-            else original
+            original.model_dump(exclude_none=True) if hasattr(original, "model_dump") else original
         )
         if not isinstance(item, dict):
             continue

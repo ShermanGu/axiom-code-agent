@@ -6,7 +6,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-
 MODEL_PROVIDER_PRESETS: dict[str, dict[str, Any]] = {
     "groq": {
         "name": "qwen/qwen3.6-27b",
@@ -46,6 +45,7 @@ class ModelConfig:
     max_output_tokens: int = 8192
     base_url: str | None = None
     api_key_env: str = "OPENAI_API_KEY"
+    no_proxy: str = ""
 
 
 @dataclass(slots=True)
@@ -212,6 +212,8 @@ def _validate(config: AxiomConfig) -> None:
         raise ValueError("workspace.approval must be on-risk, always, deny, never, or auto")
     if config.workspace.command_timeout_seconds < 1:
         raise ValueError("workspace.command_timeout_seconds must be at least 1")
+    if not isinstance(config.model.no_proxy, str):
+        raise ValueError("model.no_proxy must be a comma-separated string")
     names: set[str] = set()
     for server in config.mcp.servers:
         if server.name in names:
