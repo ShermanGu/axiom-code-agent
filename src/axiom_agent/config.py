@@ -5,6 +5,7 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 MODEL_PROVIDER_PRESETS: dict[str, dict[str, Any]] = {
     "groq": {
@@ -45,6 +46,7 @@ class ModelConfig:
     max_output_tokens: int = 8192
     base_url: str | None = None
     api_key_env: str = "OPENAI_API_KEY"
+    api_key: str | None = None
     no_proxy: str = ""
 
 
@@ -200,7 +202,26 @@ def load_config(
         base = config_path.parent.parent
     config.resolve_paths(base)
     _validate(config)
+    apply_no_proxy_environment(config.model.no_proxy)
     return config
+
+
+def apply_no_proxy_environment(value: str) -> None:
+    configured = [_no_proxy_host(entry) for entry in _split_no_proxy(value)]
+    if not configured:
+        return
+    existing = _split_no_proxy(os.getenv("NO_PROXY", "") + "," + os.getenv("no_proxy", ""))
+    merged = ",".join(dict.fromkeys([*existing, *configured]))
+    os.environ["NO_PROXY"] = merged
+    os.environ["no_proxy"] = merged
+
+
+def _split_no_proxy(value: str) -> list[str]:
+    return [entry.strip() for entry in value.split(",") if entry.strip()]
+
+
+def _no_proxy_host(entry: str) -> str:
+    return urlsplit(entry).netloc if "://" in entry else entry
 
 
 def _validate(config: AxiomConfig) -> None:
@@ -212,6 +233,8 @@ def _validate(config: AxiomConfig) -> None:
         raise ValueError("workspace.approval must be on-risk, always, deny, never, or auto")
     if config.workspace.command_timeout_seconds < 1:
         raise ValueError("workspace.command_timeout_seconds must be at least 1")
+    if config.model.api_key is not None and not isinstance(config.model.api_key, str):
+        raise ValueError("model.api_key must be a string")
     if not isinstance(config.model.no_proxy, str):
         raise ValueError("model.no_proxy must be a comma-separated string")
     names: set[str] = set()

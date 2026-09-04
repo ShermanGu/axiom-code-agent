@@ -9,6 +9,6 @@ venv/
 dist/
 build/
 .env
+.axiom/config.toml
 .axiom/memory.db*
 .axiom/events.jsonl
-

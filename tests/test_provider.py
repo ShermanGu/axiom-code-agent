@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import sys
 import unittest
-from types import SimpleNamespace
-from unittest.mock import patch
+from types import ModuleType, SimpleNamespace
+from unittest.mock import Mock, patch
 
 from axiom_agent.config import ModelConfig
 from axiom_agent.providers.openai import OpenAIChatProvider, OpenAIResponsesProvider
@@ -35,25 +37,53 @@ class OpenAIProviderTests(unittest.TestCase):
         )
         http_client = object()
         openai_client = object()
+        openai_module = ModuleType("openai")
+        http_factory = Mock(return_value=http_client)
+        openai_factory = Mock(return_value=openai_client)
+        openai_module.DefaultHttpx2Client = http_factory
+        openai_module.OpenAI = openai_factory
         with (
-            patch.dict("os.environ", {"OPENAI_API_KEY": "test-key"}),
-            patch("openai.DefaultHttpx2Client", return_value=http_client) as http_factory,
-            patch("openai.OpenAI", return_value=openai_client) as openai_factory,
+            patch.dict(sys.modules, {"openai": openai_module}),
+            patch.dict(
+                os.environ,
+                {"OPENAI_API_KEY": "environment-key", "NO_PROXY": "localhost"},
+                clear=True,
+            ),
         ):
             provider = OpenAIResponsesProvider(config)
             self.assertIs(provider._client_instance(), openai_client)
+            self.assertEqual(
+                os.environ["NO_PROXY"],
+                "localhost,api.openai.com,llm.internal.example",
+            )
+            self.assertEqual(os.environ["no_proxy"], os.environ["NO_PROXY"])
 
         http_factory.assert_called_once_with(
             mounts={
                 "all://api.openai.com": None,
-                "https://llm.internal.example/v1": None,
+                "https://llm.internal.example": None,
             }
         )
         openai_factory.assert_called_once_with(
-            api_key="test-key",
+            api_key="environment-key",
             base_url="https://llm.internal.example/v1",
             http_client=http_client,
         )
+
+    def test_plaintext_api_key_is_used_as_environment_fallback(self) -> None:
+        config = ModelConfig(api_key_env="MISSING_KEY", api_key="local-key")
+        openai_client = object()
+        openai_module = ModuleType("openai")
+        openai_module.DefaultHttpx2Client = Mock()
+        openai_module.OpenAI = openai_factory = Mock(return_value=openai_client)
+        with (
+            patch.dict(sys.modules, {"openai": openai_module}),
+            patch.dict(os.environ, {}, clear=True),
+        ):
+            provider = OpenAIResponsesProvider(config)
+            self.assertIs(provider._client_instance(), openai_client)
+
+        openai_factory.assert_called_once_with(api_key="local-key")
 
     def test_responses_function_call_is_translated(self) -> None:
         responses = _Responses()

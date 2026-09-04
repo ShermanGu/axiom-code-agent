@@ -4,8 +4,9 @@ import asyncio
 import json
 import os
 from typing import Any
+from urllib.parse import urlsplit
 
-from axiom_agent.config import ModelConfig
+from axiom_agent.config import ModelConfig, apply_no_proxy_environment
 from axiom_agent.providers.base import ModelProvider
 from axiom_agent.types import ModelRequest, ModelResponse, ToolCall
 
@@ -177,11 +178,12 @@ def _create_client(config: ModelConfig, missing_package_message: str) -> Any:
             missing_package_message + "Install Axiom with: pip install -e ."
         ) from exc
 
-    api_key = os.getenv(config.api_key_env)
+    apply_no_proxy_environment(config.no_proxy)
+    api_key = os.getenv(config.api_key_env) or config.api_key
     if not api_key:
         raise RuntimeError(
             f"Missing {config.api_key_env}. Set it in your environment, "
-            "or run 'axiom demo' for the offline end-to-end demo."
+            "set model.api_key, or run 'axiom demo' for the offline end-to-end demo."
         )
     kwargs: dict[str, Any] = {"api_key": api_key}
     if config.base_url:
@@ -192,8 +194,18 @@ def _create_client(config: ModelConfig, missing_package_message: str) -> Any:
 
 
 def _no_proxy_mounts(value: str) -> dict[str, None]:
-    entries = (item.strip() for item in value.split(","))
-    return {entry if "://" in entry else f"all://{entry}": None for entry in entries if entry}
+    return {_no_proxy_pattern(entry): None for entry in _split_no_proxy(value)}
+
+
+def _split_no_proxy(value: str) -> list[str]:
+    return [entry.strip() for entry in value.split(",") if entry.strip()]
+
+
+def _no_proxy_pattern(entry: str) -> str:
+    if "://" not in entry:
+        return f"all://{entry}"
+    url = urlsplit(entry)
+    return f"{url.scheme}://{url.netloc}"
 
 
 def _chat_messages(items: list[Any]) -> list[dict[str, Any]]:
