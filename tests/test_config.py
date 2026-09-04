@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import tempfile
 import unittest
-from unittest.mock import patch
 from pathlib import Path
+from unittest.mock import patch
 
 from axiom_agent.config import load_config
 
@@ -50,6 +50,22 @@ paths = ["skills", ".axiom/skills"]
         with tempfile.TemporaryDirectory() as directory:
             config = load_config(workspace=directory)
             self.assertEqual(config.workspace.root, Path(directory).resolve())
+
+    def test_model_endpoint_and_no_proxy_are_loaded(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "axiom.toml"
+            config_path.write_text(
+                "[model]\n"
+                'base_url = "https://llm.internal.example/v1"\n'
+                'no_proxy = "api.openai.com,https://llm.internal.example"\n',
+                encoding="utf-8",
+            )
+            config = load_config(config_path, workspace=directory)
+            self.assertEqual(config.model.base_url, "https://llm.internal.example/v1")
+            self.assertEqual(
+                config.model.no_proxy,
+                "api.openai.com,https://llm.internal.example",
+            )
 
     def test_mcp_environment_values_expand(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

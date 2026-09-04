@@ -77,6 +77,22 @@ The OpenAI adapter uses the Responses API with custom function tools and `store=
 replays response output items and function outputs so the core does not require server-side
 conversation storage. See the official [Responses API reference](https://developers.openai.com/api/reference/cli/resources/responses/methods/create).
 
+When a model endpoint must bypass system proxy settings, set a comma-separated list of URLs or
+hostnames in the model configuration:
+
+```toml
+[model]
+provider = "openai-chat"
+name = "your-model"
+base_url = "https://llm.internal.example/v1"
+api_key_env = "LLM_API_KEY"
+no_proxy = "llm.internal.example"
+```
+
+Use `provider = "openai"` for endpoints that implement the Responses API, and `openai-chat` for
+OpenAI-compatible Chat Completions endpoints. `base_url` can also be overridden with
+`AXIOM_BASE_URL`.
+
 ### Free-tier model providers
 
 Axiom has presets for three OpenAI-compatible services. Select one with `AXIOM_PROVIDER`; its

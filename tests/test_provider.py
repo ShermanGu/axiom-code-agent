@@ -4,6 +4,7 @@ import asyncio
 import json
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from axiom_agent.config import ModelConfig
 from axiom_agent.providers.openai import OpenAIChatProvider, OpenAIResponsesProvider
@@ -23,12 +24,37 @@ class _Responses:
             arguments=json.dumps({"path": "README.md"}),
         )
         usage = SimpleNamespace(model_dump=lambda **_kwargs: {"input_tokens": 12})
-        return SimpleNamespace(
-            id="resp_1", output=[call], output_text="", usage=usage
-        )
+        return SimpleNamespace(id="resp_1", output=[call], output_text="", usage=usage)
 
 
 class OpenAIProviderTests(unittest.TestCase):
+    def test_no_proxy_urls_are_mounted_without_a_proxy(self) -> None:
+        config = ModelConfig(
+            base_url="https://llm.internal.example/v1",
+            no_proxy="api.openai.com, https://llm.internal.example/v1",
+        )
+        http_client = object()
+        openai_client = object()
+        with (
+            patch.dict("os.environ", {"OPENAI_API_KEY": "test-key"}),
+            patch("openai.DefaultHttpx2Client", return_value=http_client) as http_factory,
+            patch("openai.OpenAI", return_value=openai_client) as openai_factory,
+        ):
+            provider = OpenAIResponsesProvider(config)
+            self.assertIs(provider._client_instance(), openai_client)
+
+        http_factory.assert_called_once_with(
+            mounts={
+                "all://api.openai.com": None,
+                "https://llm.internal.example/v1": None,
+            }
+        )
+        openai_factory.assert_called_once_with(
+            api_key="test-key",
+            base_url="https://llm.internal.example/v1",
+            http_client=http_client,
+        )
+
     def test_responses_function_call_is_translated(self) -> None:
         responses = _Responses()
         client = SimpleNamespace(responses=responses)

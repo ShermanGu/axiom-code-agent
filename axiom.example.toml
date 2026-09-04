@@ -11,6 +11,10 @@ provider = "openai"
 name = "gpt-5.6-terra"
 reasoning_effort = "medium"
 max_output_tokens = 8192
+# Optional custom endpoint, for example an OpenAI-compatible local model server.
+# base_url = "http://127.0.0.1:8000/v1"
+# Comma-separated URLs or hostnames that should bypass system HTTP(S) proxies.
+no_proxy = ""
 
 [workspace]
 root = "."
