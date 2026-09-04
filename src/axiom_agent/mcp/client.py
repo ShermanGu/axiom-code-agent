@@ -76,7 +76,7 @@ class MCPManager:
                     schema = getattr(remote_tool, "inputSchema", None)
                     if schema is None:
                         schema = getattr(remote_tool, "input_schema", None)
-                    if hasattr(schema, "model_dump"):
+                    if schema is not None and hasattr(schema, "model_dump"):
                         schema = schema.model_dump(exclude_none=True)
                     registry.register(
                         MCPTool(

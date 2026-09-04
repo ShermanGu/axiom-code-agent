@@ -1,5 +1,10 @@
 # Axiom
 
+> [!WARNING]
+> **Work in progress (WIP).** Axiom is under active development. Interfaces, configuration, and
+> behavior may change between minor releases. Use it on non-critical workspaces first, keep changes
+> under version control, and review tool approvals carefully.
+
 Axiom is a modular Python code agent that can plan a task, operate on a workspace, call local or
 remote MCP tools, load task-specific skills, and remember useful context across sessions.
 
@@ -218,9 +223,21 @@ Read [`docs/architecture.md`](docs/architecture.md) for lifecycle and extension 
 - **Scheduler:** the current executor runs ready steps sequentially. Independent read-only steps can
   later be dispatched in parallel without changing the plan format.
 
+## Roadmap
+
+Axiom will continue to improve in small, reviewable releases. Near-term priorities are:
+
+- token-by-token model streaming in the TUI
+- stronger sandbox and permission backends
+- parallel execution for independent, read-only plan steps
+- richer evals, tracing, and failure recovery
+- packaging and cross-platform installation polish
+
+Issues and focused pull requests are welcome; see [`CONTRIBUTING.md`](CONTRIBUTING.md).
+
 ## Current boundaries
 
-Axiom v0.1 is a strong local foundation, not an OS sandbox. File tools enforce a resolved workspace
+Axiom v0.3 is a strong local foundation, not an OS sandbox. File tools enforce a resolved workspace
 boundary, but a command deliberately given to the shell runs with the current user's permissions.
 High-risk command matching is defense in depth, not a security boundary. Run untrusted agents in a
 container or disposable VM and keep `allow_network = false` unless the task requires it.
