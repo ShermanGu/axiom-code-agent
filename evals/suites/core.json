@@ -1,0 +1,212 @@
+{
+  "schema_version": 1,
+  "name": "core-offline",
+  "cases": [
+    {
+      "id": "inspect_workspace",
+      "goal": "Inspect the workspace and report what is present.",
+      "initial_files": {"README.md": "# Fixture\n"},
+      "plan": {
+        "strategy": "Inspect before answering.",
+        "steps": [
+          {"id": "inspect", "title": "Inspect", "description": "List files.", "depends_on": []}
+        ]
+      },
+      "responses": [
+        {"tool_calls": [{"name": "fs_list", "arguments": {"path": "."}}]},
+        {"text": "Inspection complete."}
+      ],
+      "expected": {
+        "success": true,
+        "output_contains": ["Inspection complete"],
+        "step_statuses": {"inspect": "completed"},
+        "events": ["plan.created", "tool.started", "agent.completed"],
+        "model_calls": 3,
+        "tool_calls": 1
+      }
+    },
+    {
+      "id": "exact_file_edit",
+      "goal": "Change the configured value from 1 to 2.",
+      "initial_files": {"value.txt": "value = 1\n"},
+      "plan": {
+        "strategy": "Read, edit, and report.",
+        "steps": [
+          {"id": "edit", "title": "Edit value", "description": "Update value.txt.", "depends_on": []}
+        ]
+      },
+      "responses": [
+        {"tool_calls": [{"name": "fs_read", "arguments": {"path": "value.txt"}}]},
+        {"tool_calls": [{"name": "fs_replace", "arguments": {"path": "value.txt", "old": "value = 1", "new": "value = 2"}}]},
+        {"text": "Updated the value."}
+      ],
+      "expected": {
+        "success": true,
+        "step_statuses": {"edit": "completed"},
+        "files": {"value.txt": "value = 2\n"},
+        "changed_files": ["value.txt"],
+        "allowed_changes": ["value.txt"],
+        "forbidden_changes": ["README.md", "src/*"],
+        "model_calls": 4,
+        "tool_calls": 2
+      }
+    },
+    {
+      "id": "tool_error_recovery",
+      "goal": "Recover from a missing path and inspect the workspace.",
+      "initial_files": {"actual.txt": "present\n"},
+      "plan": {
+        "strategy": "Recover from lookup errors.",
+        "steps": [
+          {"id": "recover", "title": "Recover", "description": "Find the actual file.", "depends_on": []}
+        ]
+      },
+      "responses": [
+        {"tool_calls": [{"name": "fs_read", "arguments": {"path": "missing.txt"}}]},
+        {"tool_calls": [{"name": "fs_list", "arguments": {"path": "."}}]},
+        {"text": "Recovered after the missing-file observation."}
+      ],
+      "expected": {
+        "success": true,
+        "step_statuses": {"recover": "completed"},
+        "events": ["tool.failed", "tool.completed"],
+        "model_calls": 4,
+        "tool_calls": 2
+      }
+    },
+    {
+      "id": "parallel_safe_reads",
+      "goal": "Read two independent files.",
+      "initial_files": {"a.txt": "A\n", "b.txt": "B\n"},
+      "plan": {
+        "strategy": "Read both inputs.",
+        "steps": [
+          {"id": "read", "title": "Read files", "description": "Read a.txt and b.txt.", "depends_on": []}
+        ]
+      },
+      "responses": [
+        {"tool_calls": [
+          {"name": "fs_read", "arguments": {"path": "a.txt"}},
+          {"name": "fs_read", "arguments": {"path": "b.txt"}}
+        ]},
+        {"text": "Read both files."}
+      ],
+      "expected": {
+        "success": true,
+        "step_statuses": {"read": "completed"},
+        "model_calls": 3,
+        "tool_calls": 2
+      }
+    },
+    {
+      "id": "multi_step_finalizer",
+      "goal": "Analyze and verify the fixture.",
+      "initial_files": {"module.py": "value = 1\n"},
+      "plan": {
+        "strategy": "Analyze before verification.",
+        "steps": [
+          {"id": "analyze", "title": "Analyze", "description": "Analyze the fixture.", "depends_on": []},
+          {"id": "verify", "title": "Verify", "description": "Verify the analysis.", "depends_on": ["analyze"]}
+        ]
+      },
+      "responses": [
+        {"text": "Analysis complete."},
+        {"text": "Verification complete."}
+      ],
+      "finalizer": "All planned steps completed.",
+      "expected": {
+        "success": true,
+        "output_contains": ["All planned steps completed"],
+        "step_statuses": {"analyze": "completed", "verify": "completed"},
+        "model_calls": 4,
+        "tool_calls": 0
+      }
+    },
+    {
+      "id": "dependency_skip_after_failure",
+      "goal": "Demonstrate a failed step and dependency skip.",
+      "initial_files": {},
+      "options": {"max_turns": 1, "max_step_retries": 0},
+      "plan": {
+        "strategy": "The first step fails, so its dependent step must skip.",
+        "steps": [
+          {"id": "fail", "title": "Fail", "description": "Return no usable result.", "depends_on": []},
+          {"id": "blocked", "title": "Blocked", "description": "Depends on fail.", "depends_on": ["fail"]}
+        ]
+      },
+      "responses": [{"text": ""}],
+      "finalizer": "Task incomplete because a dependency failed.",
+      "expected": {
+        "success": false,
+        "output_contains": ["Task incomplete"],
+        "step_statuses": {"fail": "failed", "blocked": "skipped"},
+        "events": ["step.failed", "step.skipped"],
+        "model_calls": 3,
+        "tool_calls": 0
+      }
+    },
+    {
+      "id": "nonzero_command_observation",
+      "goal": "Run a failing verification command and report its real exit code.",
+      "initial_files": {},
+      "plan": {
+        "strategy": "Run the command and inspect its observation.",
+        "steps": [
+          {"id": "check", "title": "Run failing check", "description": "Observe a nonzero command.", "depends_on": []}
+        ]
+      },
+      "responses": [
+        {"tool_calls": [{
+          "name": "shell_run",
+          "arguments": {
+            "command": "echo \"verification failed\"; exit 3"
+          }
+        }]},
+        {"text": "The verification command failed with exit code 3; no success is claimed."}
+      ],
+      "expected": {
+        "success": true,
+        "output_contains": ["failed with exit code 3"],
+        "step_statuses": {"check": "completed"},
+        "changed_files": [],
+        "shell_results": [
+          {"exit_code": 3, "output_contains": ["verification failed"]}
+        ],
+        "model_calls": 3,
+        "tool_calls": 1
+      }
+    },
+    {
+      "id": "successful_verification_evidence",
+      "goal": "Verify the fixture and return concrete evidence.",
+      "initial_files": {"check.txt": "ready\n"},
+      "plan": {
+        "strategy": "Run an executable verification check.",
+        "steps": [
+          {"id": "verify", "title": "Verify fixture", "description": "Run a check with evidence.", "depends_on": []}
+        ]
+      },
+      "responses": [
+        {"tool_calls": [{
+          "name": "shell_run",
+          "arguments": {
+            "command": "python -c \"from pathlib import Path; assert Path('check.txt').read_text(encoding='utf-8') == 'ready\\n'; print('verification passed')\""
+          }
+        }]},
+        {"text": "Verification evidence: exit code 0 and output 'verification passed'."}
+      ],
+      "expected": {
+        "success": true,
+        "output_contains": ["Verification evidence", "exit code 0"],
+        "step_statuses": {"verify": "completed"},
+        "changed_files": [],
+        "forbidden_changes": ["check.txt"],
+        "shell_results": [
+          {"exit_code": 0, "output_contains": ["verification passed"]}
+        ],
+        "model_calls": 3,
+        "tool_calls": 1
+      }
+    }
+  ]
+}

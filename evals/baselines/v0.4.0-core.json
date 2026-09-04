@@ -1,0 +1,31 @@
+{
+  "baseline_version": 1,
+  "release": "v0.4.0",
+  "suite": "core-offline",
+  "platform": "Windows local development baseline",
+  "recorded_at": "2026-09-04",
+  "expected": {
+    "passed": 8,
+    "total": 8,
+    "model_calls": 27,
+    "tool_calls": 9,
+    "input_token_estimate": 478,
+    "output_token_estimate": 135,
+    "total_token_estimate": 613,
+    "case_ids": [
+      "inspect_workspace",
+      "exact_file_edit",
+      "tool_error_recovery",
+      "parallel_safe_reads",
+      "multi_step_finalizer",
+      "dependency_skip_after_failure",
+      "nonzero_command_observation",
+      "successful_verification_evidence"
+    ]
+  },
+  "notes": [
+    "Call counts and case outcomes are deterministic regression signals.",
+    "Token values are estimates produced by ScriptedEvalProvider, not provider billing data.",
+    "Durations and token estimates may vary slightly across operating systems and Python builds."
+  ]
+}

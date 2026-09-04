@@ -12,3 +12,4 @@ build/
 .axiom/config.toml
 .axiom/memory.db*
 .axiom/events.jsonl
+.axiom/evals/

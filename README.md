@@ -62,6 +62,7 @@ axiom run "goal"                  execute one task
 axiom chat                        keep a persistent conversation thread
 axiom tui                         open the full-screen terminal interface
 axiom demo                        run planning -> tool -> memory offline
+axiom eval                        run deterministic offline regression scenarios
 axiom doctor                      inspect the local setup
 axiom skills                      list discovered SKILL.md packages
 axiom mcp                         list configured MCP servers
@@ -256,3 +257,7 @@ ruff check src tests
 
 The offline end-to-end test covers planner output, an actual tool call, tool-result feedback, final
 completion, event emission, conversation persistence, and durable episode creation.
+
+Maintainers can also run `axiom eval` from the repository root. The versioned core suite exercises
+eight deterministic runtime scenarios and writes a JSON report under `.axiom/evals/`. See
+[`evals/README.md`](evals/README.md) and the tracked [`roadmap`](docs/roadmap.md).
