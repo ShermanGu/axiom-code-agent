@@ -82,8 +82,16 @@ hostnames in the model configuration:
 
 ```toml
 [model]
-no_proxy = "api.openai.com,https://llm.internal.example"
+provider = "openai-chat"
+name = "your-model"
+base_url = "https://llm.internal.example/v1"
+api_key_env = "LLM_API_KEY"
+no_proxy = "llm.internal.example"
 ```
+
+Use `provider = "openai"` for endpoints that implement the Responses API, and `openai-chat` for
+OpenAI-compatible Chat Completions endpoints. `base_url` can also be overridden with
+`AXIOM_BASE_URL`.
 
 ### Free-tier model providers
 

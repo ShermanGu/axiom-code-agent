@@ -51,14 +51,17 @@ paths = ["skills", ".axiom/skills"]
             config = load_config(workspace=directory)
             self.assertEqual(config.workspace.root, Path(directory).resolve())
 
-    def test_model_no_proxy_is_loaded(self) -> None:
+    def test_model_endpoint_and_no_proxy_are_loaded(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             config_path = Path(directory) / "axiom.toml"
             config_path.write_text(
-                '[model]\nno_proxy = "api.openai.com,https://llm.internal.example"\n',
+                "[model]\n"
+                'base_url = "https://llm.internal.example/v1"\n'
+                'no_proxy = "api.openai.com,https://llm.internal.example"\n',
                 encoding="utf-8",
             )
             config = load_config(config_path, workspace=directory)
+            self.assertEqual(config.model.base_url, "https://llm.internal.example/v1")
             self.assertEqual(
                 config.model.no_proxy,
                 "api.openai.com,https://llm.internal.example",
