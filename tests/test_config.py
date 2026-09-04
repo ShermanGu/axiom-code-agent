@@ -14,7 +14,8 @@ class ConfigTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             config_path = Path(directory) / "axiom.toml"
             config_path.write_text(
-                '[model]\nname = "gpt-5.6-terra"\nmax_output_tokens = 8192\n',
+                '[model]\nname = "gpt-5.6-terra"\nmax_output_tokens = 8192\n'
+                'api_key = "another-provider-key"\n',
                 encoding="utf-8",
             )
             with patch.dict("os.environ", {"AXIOM_PROVIDER": "groq"}, clear=True):
@@ -22,6 +23,7 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(config.model.provider, "groq")
             self.assertEqual(config.model.name, "qwen/qwen3.6-27b")
             self.assertEqual(config.model.api_key_env, "GROQ_API_KEY")
+            self.assertIsNone(config.model.api_key)
             self.assertEqual(config.model.base_url, "https://api.groq.com/openai/v1")
             self.assertEqual(config.model.max_output_tokens, 4096)
 

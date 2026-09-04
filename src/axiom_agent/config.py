@@ -162,6 +162,7 @@ def load_config(
         ):
             if not os.getenv(environment_name):
                 model_values.pop(key, None)
+        model_values.pop("api_key", None)
     if model_name := os.getenv("AXIOM_MODEL"):
         model_values["name"] = model_name
     if base_url := os.getenv("AXIOM_BASE_URL"):
