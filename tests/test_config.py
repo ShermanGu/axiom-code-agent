@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -57,15 +58,23 @@ paths = ["skills", ".axiom/skills"]
             config_path.write_text(
                 "[model]\n"
                 'base_url = "https://llm.internal.example/v1"\n'
+                'api_key = "local-key"\n'
                 'no_proxy = "api.openai.com,https://llm.internal.example"\n',
                 encoding="utf-8",
             )
-            config = load_config(config_path, workspace=directory)
+            with patch.dict("os.environ", {"NO_PROXY": "localhost"}, clear=True):
+                config = load_config(config_path, workspace=directory)
+                self.assertEqual(
+                    config.model.no_proxy,
+                    "api.openai.com,https://llm.internal.example",
+                )
+                self.assertEqual(config.model.api_key, "local-key")
+                self.assertEqual(
+                    os.environ["NO_PROXY"],
+                    "localhost,api.openai.com,llm.internal.example",
+                )
+                self.assertEqual(os.environ["no_proxy"], os.environ["NO_PROXY"])
             self.assertEqual(config.model.base_url, "https://llm.internal.example/v1")
-            self.assertEqual(
-                config.model.no_proxy,
-                "api.openai.com,https://llm.internal.example",
-            )
 
     def test_mcp_environment_values_expand(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

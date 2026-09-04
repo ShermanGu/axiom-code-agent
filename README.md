@@ -17,7 +17,7 @@ observers are separate boundaries, so each can be replaced without rewriting the
 - `SKILL.md` discovery, automatic routing, explicit `$skill-name` activation, and lazy loading
 - SQLite short-term conversation history, durable memories, hybrid local retrieval, and task episodes
 - JSONL lifecycle events for model calls, tool calls, plans, steps, MCP, and final outcomes
-- Interactive CLI, offline demo, diagnostics, memory inspection, and fourteen isolated tests
+- Interactive CLI, offline demo, diagnostics, memory inspection, and seventeen isolated tests
 
 ## Quick start
 
@@ -86,12 +86,19 @@ provider = "openai-chat"
 name = "your-model"
 base_url = "https://llm.internal.example/v1"
 api_key_env = "LLM_API_KEY"
+# api_key = "your-key"  # Optional local fallback when LLM_API_KEY is unset.
 no_proxy = "llm.internal.example"
 ```
 
 Use `provider = "openai"` for endpoints that implement the Responses API, and `openai-chat` for
 OpenAI-compatible Chat Completions endpoints. `base_url` can also be overridden with
-`AXIOM_BASE_URL`.
+`AXIOM_BASE_URL`. Environment-variable credentials take precedence over `api_key`. A plaintext key
+should only be stored in the generated `.axiom/config.toml`, which `axiom init` adds to `.gitignore`;
+never commit a key in `axiom.toml` or another tracked file.
+
+`no_proxy` is merged into both `NO_PROXY` and `no_proxy` when configuration is loaded, while the
+model client also receives explicit direct-routing rules. Existing environment exclusions are
+preserved. Full endpoint URLs are reduced to their host (and optional port) for the environment.
 
 ### Free-tier model providers
 

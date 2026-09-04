@@ -30,6 +30,7 @@ name = "gpt-5.6-terra"
 reasoning_effort = "medium"
 max_output_tokens = 8192
 # base_url = "http://127.0.0.1:8000/v1"
+# api_key = "your-key"  # Local use only; environment variables are safer.
 no_proxy = ""
 
 [workspace]
@@ -169,7 +170,7 @@ def _init_workspace(path: Path, force: bool) -> int:
     (config_dir / "skills").mkdir(exist_ok=True)
     config_path.write_text(DEFAULT_CONFIG, encoding="utf-8", newline="")
     gitignore = workspace / ".gitignore"
-    ignore_lines = [".axiom/memory.db*", ".axiom/events.jsonl"]
+    ignore_lines = [".axiom/config.toml", ".axiom/memory.db*", ".axiom/events.jsonl"]
     existing = gitignore.read_text(encoding="utf-8") if gitignore.exists() else ""
     additions = [line for line in ignore_lines if line not in existing.splitlines()]
     if additions:
@@ -220,7 +221,13 @@ async def _chat(app: AxiomApp, json_output: bool) -> int:
 def _doctor(config: AxiomConfig) -> int:
     openai_installed = bool(importlib.util.find_spec("openai"))
     mcp_installed = bool(importlib.util.find_spec("mcp"))
-    api_key_set = bool(os.getenv(config.model.api_key_env))
+    api_key_source = (
+        config.model.api_key_env
+        if os.getenv(config.model.api_key_env)
+        else "model.api_key"
+        if config.model.api_key
+        else "missing"
+    )
     shell = shutil.which("pwsh") or shutil.which("powershell") or shutil.which("bash")
     checks = [
         ("Python", sys.version.split()[0], sys.version_info >= (3, 11)),
@@ -228,7 +235,7 @@ def _doctor(config: AxiomConfig) -> int:
         ("Config", str(config.config_path or "defaults"), True),
         ("OpenAI SDK", "installed" if openai_installed else "missing", openai_installed),
         ("MCP SDK", "installed" if mcp_installed else "missing", mcp_installed),
-        (config.model.api_key_env, "set" if api_key_set else "missing", api_key_set),
+        ("API key", api_key_source, api_key_source != "missing"),
         ("Shell", shell or "missing", bool(shell)),
     ]
     for name, detail, healthy in checks:
