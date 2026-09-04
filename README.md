@@ -17,7 +17,7 @@ observers are separate boundaries, so each can be replaced without rewriting the
 - `SKILL.md` discovery, automatic routing, explicit `$skill-name` activation, and lazy loading
 - SQLite short-term conversation history, durable memories, hybrid local retrieval, and task episodes
 - JSONL lifecycle events for model calls, tool calls, plans, steps, MCP, and final outcomes
-- Interactive CLI, offline demo, diagnostics, memory inspection, and seventeen isolated tests
+- Interactive CLI and TUI, offline demo, diagnostics, memory inspection, and isolated tests
 
 ## Quick start
 
@@ -55,6 +55,7 @@ On macOS/Linux, activate with `source .venv/bin/activate` and export the key wit
 axiom init [path]                  create .axiom/config.toml
 axiom run "goal"                  execute one task
 axiom chat                        keep a persistent conversation thread
+axiom tui                         open the full-screen terminal interface
 axiom demo                        run planning -> tool -> memory offline
 axiom doctor                      inspect the local setup
 axiom skills                      list discovered SKILL.md packages
@@ -66,6 +67,22 @@ axiom memory forget MEMORY_ID     delete one memory
 
 Use `--no-plan` for a direct single-step run. `--yes` approves commands that the configured policy
 would otherwise ask about; it does not override the network-disable setting or workspace path guard.
+
+### Terminal interface
+
+Run the interactive interface in PowerShell, Windows Terminal, or another modern terminal:
+
+```powershell
+axiom tui
+```
+
+Use `Ctrl+Enter` to send a multiline prompt, `Escape` to stop the active task, `Ctrl+N` for a new
+conversation thread, `Ctrl+L` to clear the visible transcript, and `Ctrl+Q` to exit. Planning,
+steps, MCP connections, and tool calls appear in the activity pane. Commands requiring approval
+open a modal confirmation; `axiom tui --yes` automatically approves policy-gated commands.
+
+The first TUI release updates task state and tool activity in real time. Model text is displayed
+when each model request completes; token-by-token streaming is not yet implemented.
 
 ## Configuration
 

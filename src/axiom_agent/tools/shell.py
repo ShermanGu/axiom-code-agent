@@ -79,6 +79,10 @@ class ShellTool(Tool):
         )
         try:
             output_bytes, _ = await asyncio.wait_for(process.communicate(), timeout=timeout)
+        except asyncio.CancelledError:
+            process.kill()
+            await process.communicate()
+            raise
         except TimeoutError:
             process.kill()
             await process.communicate()
