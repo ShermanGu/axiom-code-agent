@@ -62,7 +62,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="axiom", description="A modular code agent with MCP, skills, planning, and memory."
     )
-    parser.add_argument("--version", action="version", version="Axiom 0.2.0")
+    parser.add_argument("--version", action="version", version="Axiom 0.3.0")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     init_parser = subparsers.add_parser("init", help="Initialize Axiom in a workspace")
@@ -75,6 +75,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     chat_parser = subparsers.add_parser("chat", help="Start a persistent interactive session")
     _common_run_arguments(chat_parser)
+
+    tui_parser = subparsers.add_parser("tui", help="Start the full-screen terminal interface")
+    tui_parser.add_argument("--config")
+    tui_parser.add_argument("--workspace")
+    tui_parser.add_argument("--no-plan", action="store_true")
+    tui_parser.add_argument("--yes", action="store_true", help="Approve policy-gated commands")
 
     demo_parser = subparsers.add_parser("demo", help="Run an offline end-to-end demo")
     demo_parser.add_argument("--workspace", default=".")
@@ -149,6 +155,10 @@ async def dispatch(arguments: argparse.Namespace) -> int:
         return _mcp(config)
     if getattr(arguments, "no_plan", False):
         config.agent.planning = False
+    if arguments.command == "tui":
+        from axiom_agent.tui import run_tui
+
+        return await run_tui(config, auto_approve=arguments.yes)
     approve = _approval_callback(bool(getattr(arguments, "yes", False)))
     async with AxiomApp(config, approve=approve) as app:
         if not getattr(arguments, "quiet", False):
@@ -221,6 +231,7 @@ async def _chat(app: AxiomApp, json_output: bool) -> int:
 def _doctor(config: AxiomConfig) -> int:
     openai_installed = bool(importlib.util.find_spec("openai"))
     mcp_installed = bool(importlib.util.find_spec("mcp"))
+    textual_installed = bool(importlib.util.find_spec("textual"))
     api_key_source = (
         config.model.api_key_env
         if os.getenv(config.model.api_key_env)
@@ -235,6 +246,7 @@ def _doctor(config: AxiomConfig) -> int:
         ("Config", str(config.config_path or "defaults"), True),
         ("OpenAI SDK", "installed" if openai_installed else "missing", openai_installed),
         ("MCP SDK", "installed" if mcp_installed else "missing", mcp_installed),
+        ("Textual", "installed" if textual_installed else "missing", textual_installed),
         ("API key", api_key_source, api_key_source != "missing"),
         ("Shell", shell or "missing", bool(shell)),
     ]
