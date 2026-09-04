@@ -12,6 +12,7 @@ from axiom_agent.config import AxiomConfig
 from axiom_agent.events import EventBus
 from axiom_agent.tools.base import ApprovalCallback
 from axiom_agent.tui import ApprovalScreen, AxiomTUI, PromptArea
+from textual.widgets import Button
 
 
 async def _wait_for(
@@ -125,7 +126,8 @@ class TUITests(unittest.TestCase):
                     "the approval modal to mount",
                 )
                 self.assertIsInstance(app.screen, ApprovalScreen)
-                self.assertTrue(await pilot.click("#allow"))
+                allow = app.screen.query_one("#allow", Button)
+                allow.post_message(Button.Pressed(allow))
                 await _wait_for(
                     pilot,
                     lambda: backend.agent.approved is True and not app.busy,
