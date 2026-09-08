@@ -3,14 +3,32 @@ from __future__ import annotations
 import asyncio
 import inspect
 import unittest
+from collections.abc import Callable
 from types import SimpleNamespace
 from typing import Any
+
+from textual.widgets import Button
 
 from axiom_agent.cli import build_parser
 from axiom_agent.config import AxiomConfig
 from axiom_agent.events import EventBus
 from axiom_agent.tools.base import ApprovalCallback
 from axiom_agent.tui import ApprovalScreen, AxiomTUI, PromptArea
+
+
+async def _wait_for(
+    pilot: Any,
+    condition: Callable[[], bool],
+    description: str,
+    *,
+    timeout_seconds: float = 5.0,
+) -> None:
+    try:
+        async with asyncio.timeout(timeout_seconds):
+            while not condition():
+                await pilot.pause(0.05)
+    except TimeoutError as exc:
+        raise AssertionError(f"Timed out waiting for {description}") from exc
 
 
 class _FakeAgent:
@@ -76,7 +94,11 @@ class TUITests(unittest.TestCase):
                 self.assertFalse(prompt.disabled)
                 prompt.load_text("inspect this workspace")
                 prompt.action_submit()
-                await pilot.pause(0.05)
+                await _wait_for(
+                    pilot,
+                    lambda: not app.busy and len(list(app.query(".assistant"))) == 1,
+                    "the completed assistant response",
+                )
                 self.assertEqual(backend.agent.goals, [("inspect this workspace", None)])
                 self.assertEqual(app.conversation_id, "conversation-1")
                 self.assertEqual(len(list(app.query(".assistant"))), 1)
@@ -99,10 +121,20 @@ class TUITests(unittest.TestCase):
                 prompt = app.query_one("#prompt", PromptArea)
                 prompt.load_text("delete the example")
                 prompt.action_submit()
-                await pilot.pause(0.05)
+                await _wait_for(
+                    pilot,
+                    lambda: isinstance(app.screen, ApprovalScreen)
+                    and len(list(app.screen.query("#allow"))) == 1,
+                    "the approval modal to mount",
+                )
                 self.assertIsInstance(app.screen, ApprovalScreen)
-                self.assertTrue(await pilot.click("#allow"))
-                await pilot.pause(0.05)
+                allow = app.screen.query_one("#allow", Button)
+                allow.post_message(Button.Pressed(allow))
+                await _wait_for(
+                    pilot,
+                    lambda: backend.agent.approved is True and not app.busy,
+                    "the approved task to finish",
+                )
                 self.assertTrue(backend.agent.approved)
                 self.assertFalse(app.busy)
 

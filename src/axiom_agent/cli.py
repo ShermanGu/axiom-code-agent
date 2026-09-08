@@ -62,7 +62,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="axiom", description="A modular code agent with MCP, skills, planning, and memory."
     )
-    parser.add_argument("--version", action="version", version="Axiom 0.3.0")
+    parser.add_argument("--version", action="version", version="Axiom 0.4.0")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     init_parser = subparsers.add_parser("init", help="Initialize Axiom in a workspace")
@@ -85,6 +85,11 @@ def build_parser() -> argparse.ArgumentParser:
     demo_parser = subparsers.add_parser("demo", help="Run an offline end-to-end demo")
     demo_parser.add_argument("--workspace", default=".")
     demo_parser.add_argument("--json", action="store_true", dest="json_output")
+
+    eval_parser = subparsers.add_parser("eval", help="Run a deterministic evaluation suite")
+    eval_parser.add_argument("--suite", help="Suite JSON path; defaults to the packaged core suite")
+    eval_parser.add_argument("--output")
+    eval_parser.add_argument("--json", action="store_true", dest="json_output")
 
     doctor_parser = subparsers.add_parser("doctor", help="Check the local setup")
     doctor_parser.add_argument("--config")
@@ -141,6 +146,8 @@ async def dispatch(arguments: argparse.Namespace) -> int:
         return _init_workspace(Path(arguments.path), arguments.force)
     if arguments.command == "demo":
         return await _demo(arguments)
+    if arguments.command == "eval":
+        return await _eval(arguments)
 
     config = load_config(
         getattr(arguments, "config", None), workspace=getattr(arguments, "workspace", None)
@@ -204,6 +211,35 @@ async def _demo(arguments: argparse.Namespace) -> int:
         result = await app.agent.run("Inspect this workspace in the offline demo")
         _print_result(result, arguments.json_output)
     return 0 if result.success else 2
+
+
+async def _eval(arguments: argparse.Namespace) -> int:
+    from axiom_agent.evals import run_eval_suite
+
+    suite_path = (
+        await asyncio.to_thread(Path(arguments.suite).resolve) if arguments.suite else None
+    )
+    report_path = (
+        await asyncio.to_thread(Path(arguments.output).resolve)
+        if arguments.output
+        else Path(".axiom/evals") / f"{suite_path.stem if suite_path else 'core'}-latest.json"
+    )
+    result = await run_eval_suite(suite_path, report_path=report_path)
+    payload = result.as_dict()
+    if arguments.json_output:
+        print(json.dumps(payload, ensure_ascii=False))
+    else:
+        for case in result.cases:
+            status = "pass" if case.passed else "FAIL"
+            print(
+                f"[{status}] {case.case_id}: {case.duration_ms} ms, "
+                f"model={case.model_calls}, tools={case.tool_calls}"
+            )
+            for failure in case.failures:
+                print(f"  - {failure}")
+        print(f"\n{result.passed}/{result.total} passed in {result.duration_ms} ms")
+        print(f"Report: {report_path.resolve()}")
+    return 0 if result.success else 1
 
 
 async def _chat(app: AxiomApp, json_output: bool) -> int:

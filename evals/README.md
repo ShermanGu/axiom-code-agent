@@ -1,0 +1,29 @@
+# Axiom evaluations
+
+Evaluation suites are deterministic, offline scenarios that exercise the real `AxiomApp`, planner,
+agent loop, tools, memory, finalizer, and event bus. They are regression tests for the runtime, not
+a claim about the quality of any particular hosted model.
+
+Run the packaged core suite from any directory:
+
+```powershell
+axiom eval
+```
+
+The command writes a machine-readable report to `.axiom/evals/core-latest.json`. Use `--json` for
+JSON on stdout, `--suite` to select another version-1 suite, and `--output` to choose the report
+path.
+
+Use `--suite evals/suites/core.json` when developing the repository copy. Each case defines an
+isolated workspace, a deterministic model script, and observable expectations.
+Expectations can constrain exact, allowed, and forbidden file changes and can validate structured
+Shell exit codes and output evidence. The report records pass/fail status, duration, model calls,
+tool calls, token estimates, changed files, verification evidence, and assertion failures.
+
+Committed summaries under `baselines/` provide release comparison points. CI runs the suite on
+Windows and Linux and uploads the complete JSON report for each platform. Live-model quality and
+cost-controlled benchmarks can be added without changing the version-1 report envelope.
+
+Evaluation suites are executable developer input: cases can invoke `shell_run`. Only use suite files
+you trust. The evaluator ignores repository model, MCP, skill, memory, and workspace configuration so
+the packaged offline suite cannot connect to locally configured services.
