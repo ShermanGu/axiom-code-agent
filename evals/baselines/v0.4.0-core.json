@@ -2,16 +2,13 @@
   "baseline_version": 1,
   "release": "v0.4.0",
   "suite": "core-offline",
-  "platform": "Windows local development baseline",
+  "platform": "Windows Python 3.12 reference",
   "recorded_at": "2026-09-04",
   "expected": {
     "passed": 8,
     "total": 8,
     "model_calls": 27,
     "tool_calls": 9,
-    "input_token_estimate": 478,
-    "output_token_estimate": 135,
-    "total_token_estimate": 613,
     "case_ids": [
       "inspect_workspace",
       "exact_file_edit",
@@ -23,9 +20,15 @@
       "successful_verification_evidence"
     ]
   },
+  "observed": {
+    "input_token_estimate": 478,
+    "output_token_estimate": 135,
+    "total_token_estimate": 613
+  },
   "notes": [
     "Call counts and case outcomes are deterministic regression signals.",
-    "Token values are estimates produced by ScriptedEvalProvider, not provider billing data.",
-    "Durations and token estimates may vary slightly across operating systems and Python builds."
+    "Token values are informational estimates produced by ScriptedEvalProvider, not pass criteria or provider billing data.",
+    "Only case outcomes and call counts are deterministic cross-platform regression signals.",
+    "Paths and platform details can change token estimates; Linux Python 3.12 produced 609 total units during merge review."
   ]
 }

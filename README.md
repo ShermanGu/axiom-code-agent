@@ -238,7 +238,7 @@ Issues and focused pull requests are welcome; see [`CONTRIBUTING.md`](CONTRIBUTI
 
 ## Current boundaries
 
-Axiom v0.3 is a strong local foundation, not an OS sandbox. File tools enforce a resolved workspace
+Axiom v0.4 is a strong local foundation, not an OS sandbox. File tools enforce a resolved workspace
 boundary, but a command deliberately given to the shell runs with the current user's permissions.
 High-risk command matching is defense in depth, not a security boundary. Run untrusted agents in a
 container or disposable VM and keep `allow_network = false` unless the task requires it.
@@ -258,6 +258,6 @@ ruff check src tests
 The offline end-to-end test covers planner output, an actual tool call, tool-result feedback, final
 completion, event emission, conversation persistence, and durable episode creation.
 
-Maintainers can also run `axiom eval` from the repository root. The versioned core suite exercises
-eight deterministic runtime scenarios and writes a JSON report under `.axiom/evals/`. See
+Maintainers can also run `axiom eval` from any directory. The packaged core suite exercises eight
+deterministic runtime scenarios and writes a JSON report under `.axiom/evals/`. See
 [`evals/README.md`](evals/README.md) and the tracked [`roadmap`](docs/roadmap.md).

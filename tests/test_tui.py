@@ -7,12 +7,13 @@ from collections.abc import Callable
 from types import SimpleNamespace
 from typing import Any
 
+from textual.widgets import Button
+
 from axiom_agent.cli import build_parser
 from axiom_agent.config import AxiomConfig
 from axiom_agent.events import EventBus
 from axiom_agent.tools.base import ApprovalCallback
 from axiom_agent.tui import ApprovalScreen, AxiomTUI, PromptArea
-from textual.widgets import Button
 
 
 async def _wait_for(
@@ -20,13 +21,14 @@ async def _wait_for(
     condition: Callable[[], bool],
     description: str,
     *,
-    timeout: float = 5.0,
+    timeout_seconds: float = 5.0,
 ) -> None:
-    deadline = asyncio.get_running_loop().time() + timeout
-    while not condition():
-        if asyncio.get_running_loop().time() >= deadline:
-            raise AssertionError(f"Timed out waiting for {description}")
-        await pilot.pause(0.05)
+    try:
+        async with asyncio.timeout(timeout_seconds):
+            while not condition():
+                await pilot.pause(0.05)
+    except TimeoutError as exc:
+        raise AssertionError(f"Timed out waiting for {description}") from exc
 
 
 class _FakeAgent:

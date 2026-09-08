@@ -62,7 +62,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="axiom", description="A modular code agent with MCP, skills, planning, and memory."
     )
-    parser.add_argument("--version", action="version", version="Axiom 0.3.0")
+    parser.add_argument("--version", action="version", version="Axiom 0.4.0")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     init_parser = subparsers.add_parser("init", help="Initialize Axiom in a workspace")
@@ -87,7 +87,7 @@ def build_parser() -> argparse.ArgumentParser:
     demo_parser.add_argument("--json", action="store_true", dest="json_output")
 
     eval_parser = subparsers.add_parser("eval", help="Run a deterministic evaluation suite")
-    eval_parser.add_argument("--suite", default="evals/suites/core.json")
+    eval_parser.add_argument("--suite", help="Suite JSON path; defaults to the packaged core suite")
     eval_parser.add_argument("--output")
     eval_parser.add_argument("--json", action="store_true", dest="json_output")
 
@@ -216,11 +216,13 @@ async def _demo(arguments: argparse.Namespace) -> int:
 async def _eval(arguments: argparse.Namespace) -> int:
     from axiom_agent.evals import run_eval_suite
 
-    suite_path = Path(arguments.suite).resolve()
+    suite_path = (
+        await asyncio.to_thread(Path(arguments.suite).resolve) if arguments.suite else None
+    )
     report_path = (
-        Path(arguments.output).resolve()
+        await asyncio.to_thread(Path(arguments.output).resolve)
         if arguments.output
-        else Path(".axiom/evals") / f"{suite_path.stem}-latest.json"
+        else Path(".axiom/evals") / f"{suite_path.stem if suite_path else 'core'}-latest.json"
     )
     result = await run_eval_suite(suite_path, report_path=report_path)
     payload = result.as_dict()

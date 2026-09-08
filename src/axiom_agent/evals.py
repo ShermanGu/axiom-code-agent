@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import tempfile
 import time
@@ -10,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from axiom_agent.app import AxiomApp
-from axiom_agent.config import load_config
+from axiom_agent.config import AxiomConfig
 from axiom_agent.providers.base import ModelProvider
 from axiom_agent.types import ModelRequest, ModelResponse, ToolCall
 
@@ -146,11 +147,12 @@ class ScriptedEvalProvider(ModelProvider):
 
 
 async def run_eval_suite(
-    suite_path: Path,
+    suite_path: Path | None = None,
     *,
     report_path: Path | None = None,
 ) -> EvalSuiteResult:
-    payload = json.loads(suite_path.read_text(encoding="utf-8"))
+    payload_text = await asyncio.to_thread(_read_suite, suite_path)
+    payload = json.loads(payload_text)
     if payload.get("schema_version") != 1:
         raise ValueError("Evaluation suite schema_version must be 1")
     raw_cases = payload.get("cases")
@@ -160,17 +162,29 @@ async def run_eval_suite(
     suite_started = time.perf_counter()
     cases = [await _run_case(case) for case in raw_cases]
     result = EvalSuiteResult(
-        suite=str(payload.get("name") or suite_path.stem),
+        suite=str(payload.get("name") or (suite_path.stem if suite_path else "core")),
         cases=cases,
         duration_ms=round((time.perf_counter() - suite_started) * 1000),
     )
     if report_path is not None:
-        report_path.parent.mkdir(parents=True, exist_ok=True)
-        report_path.write_text(
-            json.dumps(result.as_dict(), ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
-        )
+        await asyncio.to_thread(_write_report, report_path, result)
     return result
+
+
+def _read_suite(suite_path: Path | None) -> str:
+    if suite_path is not None:
+        return suite_path.read_text(encoding="utf-8")
+    from importlib.resources import files
+
+    return files("axiom_agent").joinpath("data/core-eval.json").read_text(encoding="utf-8")
+
+
+def _write_report(report_path: Path, result: EvalSuiteResult) -> None:
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(
+        json.dumps(result.as_dict(), ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
 
 
 async def _run_case(case: dict[str, Any]) -> EvalCaseResult:
@@ -188,7 +202,9 @@ async def _run_case(case: dict[str, Any]) -> EvalCaseResult:
         workspace = Path(directory)
         _write_files(workspace, dict(case.get("initial_files", {})))
         before = _snapshot(workspace)
-        config = load_config(workspace=workspace)
+        config = AxiomConfig()
+        config.workspace.root = workspace
+        config.resolve_paths(workspace)
         options = dict(case.get("options", {}))
         config.model.provider = "demo"
         config.agent.planning = bool(options.get("planning", True))

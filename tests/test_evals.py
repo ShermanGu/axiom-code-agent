@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import tempfile
 import unittest
+from importlib.resources import files
 from pathlib import Path
 
 from axiom_agent.cli import build_parser
@@ -30,6 +32,25 @@ class EvaluationTests(unittest.TestCase):
         self.assertTrue(result.success, result.as_dict())
         self.assertGreater(result.as_dict()["metrics"]["model_calls"], 0)
         self.assertGreater(result.as_dict()["metrics"]["tool_calls"], 0)
+        packaged = files("axiom_agent").joinpath("data/core-eval.json").read_text(encoding="utf-8")
+        self.assertEqual(json.loads(packaged), json.loads(suite.read_text(encoding="utf-8")))
+
+    def test_packaged_suite_is_isolated_from_repository_config(self) -> None:
+        previous_directory = Path.cwd()
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            (workspace / "axiom.toml").write_text(
+                '[[mcp.servers]]\nname = "must-not-load"\ntransport = "invalid"\n',
+                encoding="utf-8",
+            )
+            try:
+                os.chdir(workspace)
+                result = asyncio.run(run_eval_suite())
+            finally:
+                os.chdir(previous_directory)
+
+        self.assertEqual(result.total, 8)
+        self.assertTrue(result.success, result.as_dict())
 
     def test_change_policy_assertions_reject_unexpected_mutation(self) -> None:
         suite_payload = {
