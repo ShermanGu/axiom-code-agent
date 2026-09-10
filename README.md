@@ -64,7 +64,9 @@ axiom tui                         open the full-screen terminal interface
 axiom demo                        run planning -> tool -> memory offline
 axiom eval                        run deterministic offline regression scenarios
 axiom doctor                      inspect the local setup
-axiom skills                      list discovered SKILL.md packages
+axiom skills [list]               list discovered skills concisely
+axiom skills search "query"       search skill names and descriptions
+axiom skills show SKILL_NAME      show one skill's source and instructions
 axiom mcp                         list configured MCP servers
 axiom memory list                 inspect durable memory
 axiom memory search "query"       test memory retrieval
@@ -166,6 +168,10 @@ MCP tools appear to the model as `mcp__SERVER__TOOL`, preventing collisions betw
 inside `env` and `headers` support `$NAME`/`${NAME}` environment expansion, so secrets do not need to
 be committed to TOML.
 
+For a standalone stdio server executable, set `command` to its absolute path. `args` is optional;
+omitting it and writing `args = []` are equivalent. Axiom keeps the server's diagnostic stream on a
+real console handle so stdio MCP startup also works from the Textual TUI on Windows.
+
 The adapter targets the current stable MCP Python SDK v2 and uses its high-level `Client`. Streamable
 HTTP is the production transport; SSE remains available for older servers. See the official
 [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk).
@@ -188,6 +194,9 @@ Inspect both upgrade and downgrade paths...
 Put skills under `.axiom/skills`, add more directories to `skills.paths`, or explicitly invoke one
 in a goal with `$migration-review`. Axiom injects only selected skills; the full catalog remains
 available through `skill_activate`.
+
+Use `axiom skills` for a concise catalog, `axiom skills search "review"` to filter it, and
+`axiom skills show migration-review` to inspect one package's source path and full instructions.
 
 ## Architecture
 
