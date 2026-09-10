@@ -62,7 +62,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="axiom", description="A modular code agent with MCP, skills, planning, and memory."
     )
-    parser.add_argument("--version", action="version", version="Axiom 0.4.0")
+    parser.add_argument("--version", action="version", version="Axiom 0.4.1")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     init_parser = subparsers.add_parser("init", help="Initialize Axiom in a workspace")
@@ -109,7 +109,17 @@ def build_parser() -> argparse.ArgumentParser:
         child.add_argument("--config")
         child.add_argument("--workspace")
 
-    skills_parser = subparsers.add_parser("skills", help="List discovered skills")
+    skills_parser = subparsers.add_parser("skills", help="Discover and inspect skills")
+    skills_parser.add_argument(
+        "skills_command",
+        nargs="?",
+        choices=("list", "search", "show"),
+        default="list",
+        help="list summaries, search the catalog, or show one complete skill",
+    )
+    skills_parser.add_argument(
+        "skills_query", nargs="*", metavar="VALUE", help="search terms or one skill name"
+    )
     skills_parser.add_argument("--config")
     skills_parser.add_argument("--workspace")
 
@@ -157,7 +167,7 @@ async def dispatch(arguments: argparse.Namespace) -> int:
     if arguments.command == "memory":
         return _memory(config, arguments)
     if arguments.command == "skills":
-        return _skills(config)
+        return _skills(config, arguments)
     if arguments.command == "mcp":
         return _mcp(config)
     if getattr(arguments, "no_plan", False):
@@ -312,10 +322,51 @@ def _memory(config: AxiomConfig, arguments: argparse.Namespace) -> int:
     return 0
 
 
-def _skills(config: AxiomConfig) -> int:
-    skills = SkillRegistry.discover(config.skills.paths)
-    for skill in skills.all():
-        print(f"{skill.name}\n  {skill.description}\n  {skill.path}")
+def _skills(config: AxiomConfig, arguments: argparse.Namespace) -> int:
+    registry = SkillRegistry.discover(config.skills.paths)
+    skills = registry.all()
+    command = arguments.skills_command
+    query = arguments.skills_query
+
+    if command == "show":
+        if len(query) != 1:
+            print("Usage: axiom skills show SKILL_NAME", file=sys.stderr)
+            return 2
+        skill = registry.get(query[0])
+        if skill is None:
+            print(f"Skill not found: {query[0]}", file=sys.stderr)
+            return 1
+        print(f"Name: {skill.name}")
+        print(f"Description: {skill.description}")
+        print(f"Source: {skill.path}")
+        print(f"\n{skill.instructions}")
+        return 0
+
+    if command == "search":
+        if not query:
+            print("Usage: axiom skills search QUERY", file=sys.stderr)
+            return 2
+        terms = [term.casefold() for term in query]
+        skills = [
+            skill
+            for skill in skills
+            if all(term in f"{skill.name} {skill.description}".casefold() for term in terms)
+        ]
+        if not skills:
+            print(f"No skills matched: {' '.join(query)}")
+            return 1
+    elif query:
+        print("Usage: axiom skills [list|search QUERY|show SKILL_NAME]", file=sys.stderr)
+        return 2
+
+    if not skills:
+        print("No skills discovered.")
+        return 0
+    for skill in skills:
+        description = " ".join(skill.description.split())
+        if len(description) > 120:
+            description = f"{description[:117]}..."
+        print(f"{skill.name}: {description}")
     return 0
 
 

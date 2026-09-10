@@ -95,6 +95,27 @@ headers = { Authorization = "Bearer ${TEST_MCP_TOKEN}" }
                 config = load_config(config_path)
             self.assertEqual(config.mcp.servers[0].headers["Authorization"], "Bearer test-value")
 
+    def test_stdio_mcp_args_can_be_omitted_or_empty(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "axiom.toml"
+            config_path.write_text(
+                """
+[[mcp.servers]]
+name = "omitted"
+transport = "stdio"
+command = "first-server"
+
+[[mcp.servers]]
+name = "empty"
+transport = "stdio"
+command = "second-server"
+args = []
+""",
+                encoding="utf-8",
+            )
+            config = load_config(config_path)
+            self.assertEqual([server.args for server in config.mcp.servers], [[], []])
+
 
 if __name__ == "__main__":
     unittest.main()

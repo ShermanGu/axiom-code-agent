@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import os
 import re
+import sys
 from contextlib import AsyncExitStack
-from typing import Any
+from typing import Any, TextIO
 
 from axiom_agent.config import MCPConfig, MCPServerConfig
 from axiom_agent.events import EventBus
@@ -116,7 +118,7 @@ class MCPManager:
                 args=server.args,
                 env=server.env or None,
             )
-            transport = stdio_client(parameters)
+            transport = stdio_client(parameters, errlog=_stdio_error_stream(self._stack))
         elif server.transport == "streamable_http":
             if not server.url:
                 raise ValueError("streamable_http MCP server requires url")
@@ -175,3 +177,16 @@ def _tool_name(server: MCPServerConfig, remote_name: str) -> str:
         return sanitized
     suffix = str(abs(hash(raw)))[:8]
     return f"{sanitized[:55]}_{suffix}"
+
+
+def _stdio_error_stream(stack: AsyncExitStack) -> TextIO:
+    """Return a real file handle even when a terminal UI has replaced sys.stderr."""
+    stream = sys.__stderr__
+    if stream is not None and not stream.closed:
+        try:
+            os.fstat(stream.fileno())
+        except (AttributeError, OSError, ValueError):
+            pass
+        else:
+            return stream
+    return stack.enter_context(open(os.devnull, "w", encoding="utf-8"))

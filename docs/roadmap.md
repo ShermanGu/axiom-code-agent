@@ -7,7 +7,7 @@ opening a new milestone and link it from this document.
 
 ## Current milestone
 
-- [`v0.4.0`](releases/v0.4.0.md) — P0-1 deterministic evaluation baseline (ready for review)
+- [`v0.4.1`](releases/v0.4.1.md) — P0-1 Windows MCP and Skill CLI hardening (completed)
 
 ## P0 — Reliable single-agent kernel
 
@@ -24,8 +24,9 @@ repositories without silently losing state or overwriting unrelated user work.
 - [x] Add `axiom eval` and a machine-readable report.
 - [x] Add exact, allowed, and forbidden file-change assertions.
 - [x] Add command exit-code and verification-evidence assertions.
-- [ ] Add live-provider benchmark suites with explicit cost controls.
 - [x] Run the core suite in cross-platform CI and retain comparable baseline summaries.
+- [x] Keep Windows stdio MCP startup reliable when terminal interfaces replace standard streams.
+- [x] Add concise Skill list, search, and detail inspection commands.
 
 ### P0-2 Durable execution and recovery
 
@@ -81,6 +82,7 @@ code context rather than repeated blind traversal.
 - [ ] Add versioned Skills with dependencies, trust, resources, semantic routing, and activation that
   can persist across steps.
 - [ ] Add streaming, provider fallback, model capability declarations, and cost-aware model routing.
+- [ ] Add live-provider benchmark suites with explicit cost controls.
 
 ## P2 — Multi-agent and long-running work
 

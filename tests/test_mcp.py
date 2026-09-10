@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import sys
 import types
 import unittest
@@ -66,7 +67,13 @@ class MCPManagerTests(unittest.TestCase):
         client_module = types.ModuleType("mcp.client")
         client_module.__path__ = []
         stdio_module = types.ModuleType("mcp.client.stdio")
-        stdio_module.stdio_client = lambda _parameters: _Transport()
+        captured: dict[str, object] = {}
+
+        def stdio_client(_parameters, *, errlog):
+            captured["errlog"] = errlog
+            return _Transport()
+
+        stdio_module.stdio_client = stdio_client
         modules = {
             "mcp": mcp_module,
             "mcp.client": client_module,
@@ -98,7 +105,47 @@ class MCPManagerTests(unittest.TestCase):
             await manager.close()
             self.assertTrue(_Client.closed)
 
-        with patch.dict(sys.modules, modules):
+        with patch.dict(sys.modules, modules), patch.object(sys, "stderr", io.StringIO()):
+            asyncio.run(scenario())
+        self.assertIs(captured["errlog"], sys.__stderr__)
+
+    def test_real_stdio_connects_when_current_stderr_has_no_file_descriptor(self) -> None:
+        server_script = """
+from mcp.server import MCPServer
+
+server = MCPServer("stdio-test")
+
+@server.tool()
+def echo(text: str) -> str:
+    return text
+
+server.run()
+"""
+
+        async def scenario() -> None:
+            events = EventBus()
+            manager = MCPManager(
+                MCPConfig(
+                    servers=[
+                        MCPServerConfig(
+                            name="stdio-test",
+                            command=sys.executable,
+                            args=["-c", server_script],
+                            transport="stdio",
+                        )
+                    ]
+                ),
+                events,
+            )
+            registry = ToolRegistry()
+            try:
+                async with asyncio.timeout(20):
+                    await manager.connect(registry)
+                self.assertIn("mcp__stdio-test__echo", registry.names())
+            finally:
+                await manager.close()
+
+        with patch.object(sys, "stderr", io.StringIO()):
             asyncio.run(scenario())
 
 
