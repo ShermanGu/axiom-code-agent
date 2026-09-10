@@ -7,7 +7,7 @@ opening a new milestone and link it from this document.
 
 ## Current milestone
 
-- [`v0.4.1`](releases/v0.4.1.md) — P0-1 Windows MCP and Skill CLI hardening (in review)
+- [`v0.4.1`](releases/v0.4.1.md) — P0-1 Windows MCP and Skill CLI hardening (completed)
 
 ## P0 — Reliable single-agent kernel
 
