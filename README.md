@@ -21,7 +21,9 @@ observers are separate boundaries, so each can be replaced without rewriting the
 - MCP client support for stdio, Streamable HTTP, and SSE servers
 - `SKILL.md` discovery, automatic routing, explicit `$skill-name` activation, and lazy loading
 - SQLite short-term conversation history, durable memories, hybrid local retrieval, and task episodes
-- JSONL lifecycle events for model calls, tool calls, plans, steps, MCP, and final outcomes
+- Durable SQLite checkpoints for runs, plans, steps, attempts, model turns, and tool calls
+- Safe interrupted-run recovery, explicit terminal states, and per-stage usage/latency metrics
+- SQLite plus JSONL lifecycle events for model calls, tools, plans, steps, MCP, and outcomes
 - Interactive CLI and TUI, offline demo, diagnostics, memory inspection, and isolated tests
 
 ## Quick start
@@ -71,6 +73,10 @@ axiom mcp                         list configured MCP servers
 axiom memory list                 inspect durable memory
 axiom memory search "query"       test memory retrieval
 axiom memory forget MEMORY_ID     delete one memory
+axiom runs                        list durable run history
+axiom runs show RUN_ID            inspect steps, status, and model metrics
+axiom runs export RUN_ID          export one run's events as JSONL
+axiom resume RUN_ID               resume an interrupted or failed run
 ```
 
 Use `--no-plan` for a direct single-step run. `--yes` approves commands that the configured policy
@@ -91,6 +97,31 @@ open a modal confirmation; `axiom tui --yes` automatically approves policy-gated
 
 The first TUI release updates task state and tool activity in real time. Model text is displayed
 when each model request completes; token-by-token streaming is not yet implemented.
+
+### Durable runs and recovery
+
+Every task receives a stable run ID and is checkpointed in `.axiom/runs.db`. Use the first 12
+characters shown by `axiom runs` anywhere a run ID is accepted:
+
+```powershell
+axiom runs
+axiom runs show 4f2a09c71d6e
+axiom resume 4f2a09c71d6e
+axiom runs export 4f2a09c71d6e --output run-events.jsonl
+```
+
+Completed steps and recorded tool outputs are restored rather than replayed. If Axiom stopped while
+a tool was running, its outcome may be unknown; the run becomes `blocked` instead of silently
+repeating the operation. After inspecting the workspace and `axiom runs show`, replay that step only
+when acceptable:
+
+```powershell
+axiom resume 4f2a09c71d6e --retry-uncertain-tools
+```
+
+Runs and steps distinguish `failed`, `cancelled`, `interrupted`, `skipped`, and `blocked`. Planner,
+Executor, and Finalizer model calls, token usage, failures, and latency are reported separately by
+`axiom runs show` and `--json` output.
 
 ## Configuration
 
@@ -217,7 +248,7 @@ Model adapter <--> unified ToolRegistry
                     |-- skill loader
                     `-- MCP server tools
    |
-Final synthesis --> conversation history + durable episode + JSONL events
+Final synthesis --> conversation history + durable episode + SQLite/JSONL events
 ```
 
 Read [`docs/architecture.md`](docs/architecture.md) for lifecycle and extension points, and
@@ -228,6 +259,7 @@ Read [`docs/architecture.md`](docs/architecture.md) for lifecycle and extension 
 - **Model:** implement `ModelProvider.complete`, or set `model.provider` to `module:factory`.
 - **Tool:** subclass `Tool`, provide a JSON schema, and register it in `AxiomApp`.
 - **Memory:** preserve the `SQLiteMemoryStore` method contract behind the `Agent` constructor.
+- **Execution:** `ExecutionStore` owns durable checkpoints, event history, and model accounting.
 - **Planning:** replace `Planner` while returning the same `TaskPlan` data type.
 - **Interface:** subscribe to `EventBus` for a TUI, web UI, OpenTelemetry, or eval harness.
 - **Scheduler:** the current executor runs ready steps sequentially. Independent read-only steps can
@@ -240,14 +272,14 @@ Axiom will continue to improve in small, reviewable releases. Near-term prioriti
 - token-by-token model streaming in the TUI
 - stronger sandbox and permission backends
 - parallel execution for independent, read-only plan steps
-- richer evals, tracing, and failure recovery
+- richer evals, trace inspection, and transactional file changes
 - packaging and cross-platform installation polish
 
 Issues and focused pull requests are welcome; see [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## Current boundaries
 
-Axiom v0.4 is a strong local foundation, not an OS sandbox. File tools enforce a resolved workspace
+Axiom v0.5 is a strong local foundation, not an OS sandbox. File tools enforce a resolved workspace
 boundary, but a command deliberately given to the shell runs with the current user's permissions.
 High-risk command matching is defense in depth, not a security boundary. Run untrusted agents in a
 container or disposable VM and keep `allow_network = false` unless the task requires it.
@@ -261,7 +293,8 @@ replace it with an embedding and vector-index adapter.
 ```powershell
 python -m unittest discover -s tests -v
 python -m compileall -q src
-ruff check src tests
+python -m ruff check src tests
+python -m mypy src/axiom_agent
 ```
 
 The offline end-to-end test covers planner output, an actual tool call, tool-result feedback, final

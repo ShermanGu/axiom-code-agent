@@ -3,6 +3,7 @@ from __future__ import annotations
 from axiom_agent.agent import Agent
 from axiom_agent.config import AxiomConfig
 from axiom_agent.events import EventBus, JsonlEventLogger
+from axiom_agent.execution.store import ExecutionStore, SQLiteEventLogger
 from axiom_agent.mcp.client import MCPManager
 from axiom_agent.memory.store import SQLiteMemoryStore
 from axiom_agent.memory.tools import memory_tools
@@ -27,6 +28,8 @@ class AxiomApp:
             raise FileNotFoundError(f"Workspace does not exist: {config.workspace.root}")
         self.events = EventBus()
         self.events.subscribe(JsonlEventLogger(config.workspace.root / ".axiom/events.jsonl"))
+        self.execution = ExecutionStore(config.execution.path)
+        self.events.subscribe(SQLiteEventLogger(self.execution))
         self.memory = SQLiteMemoryStore(config.memory.path)
         self.skills = SkillRegistry.discover(config.skills.paths)
         self.provider = provider or create_provider(config.model)
@@ -50,6 +53,7 @@ class AxiomApp:
             skills=self.skills,
             events=self.events,
             tool_context=self.tool_context,
+            execution=self.execution,
         )
         self._started = False
         self._closed = False
@@ -63,6 +67,7 @@ class AxiomApp:
             except Exception:
                 await self.provider.close()
                 self.memory.close()
+                self.execution.close()
                 self._closed = True
                 raise
             self._started = True
@@ -74,6 +79,7 @@ class AxiomApp:
         await self.mcp.close()
         await self.provider.close()
         self.memory.close()
+        self.execution.close()
         self._started = False
         self._closed = True
 

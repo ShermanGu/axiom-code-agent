@@ -7,7 +7,7 @@ opening a new milestone and link it from this document.
 
 ## Current milestone
 
-- [`v0.4.1`](releases/v0.4.1.md) — P0-1 Windows MCP and Skill CLI hardening (completed)
+- [`v0.5.0`](releases/v0.5.0.md) — P0-2 durable execution and recovery (in progress)
 
 ## P0 — Reliable single-agent kernel
 
@@ -30,11 +30,11 @@ repositories without silently losing state or overwriting unrelated user work.
 
 ### P0-2 Durable execution and recovery
 
-- [ ] Persist runs, plans, steps, attempts, turns, and tool calls with stable IDs.
-- [ ] Checkpoint every state transition and resume an interrupted run safely.
-- [ ] Distinguish failed, cancelled, interrupted, skipped, and blocked states.
-- [ ] Connect EventBus to the SQLite event store while retaining JSONL export.
-- [ ] Account for Planner, Executor, and Finalizer model usage and latency.
+- [x] Persist runs, plans, steps, attempts, turns, and tool calls with stable IDs.
+- [x] Checkpoint every state transition and resume an interrupted run safely.
+- [x] Distinguish failed, cancelled, interrupted, skipped, and blocked states.
+- [x] Connect EventBus to the SQLite event store while retaining JSONL export.
+- [x] Account for Planner, Executor, and Finalizer model usage and latency.
 
 ### P0-3 Transactional code changes
 

@@ -48,7 +48,16 @@ class ToolResult:
     metadata: JSON = field(default_factory=dict)
 
 
-StepStatus = Literal["pending", "running", "completed", "failed", "skipped"]
+StepStatus = Literal[
+    "pending",
+    "running",
+    "completed",
+    "failed",
+    "cancelled",
+    "interrupted",
+    "blocked",
+    "skipped",
+]
 
 
 @dataclass(slots=True)
@@ -96,5 +105,8 @@ class TaskPlan:
 
     @property
     def done(self) -> bool:
-        return all(step.status in {"completed", "failed", "skipped"} for step in self.steps)
-
+        return all(
+            step.status
+            in {"completed", "failed", "cancelled", "interrupted", "blocked", "skipped"}
+            for step in self.steps
+        )

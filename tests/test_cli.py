@@ -12,6 +12,16 @@ from axiom_agent.config import AxiomConfig
 
 
 class SkillCommandTests(unittest.TestCase):
+    def test_parser_accepts_run_history_and_resume_commands(self) -> None:
+        parser = build_parser()
+        listed = parser.parse_args(["runs"])
+        self.assertEqual(listed.runs_command, "list")
+        shown = parser.parse_args(["runs", "show", "abc123", "--json"])
+        self.assertEqual((shown.runs_command, shown.run_id), ("show", "abc123"))
+        resumed = parser.parse_args(["resume", "abc123", "--retry-uncertain-tools"])
+        self.assertEqual(resumed.run_id, "abc123")
+        self.assertTrue(resumed.retry_uncertain_tools)
+
     def test_parser_supports_legacy_list_search_and_show(self) -> None:
         parser = build_parser()
         self.assertEqual(parser.parse_args(["skills"]).skills_command, "list")

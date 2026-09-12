@@ -16,8 +16,8 @@ Before opening a pull request, run:
 ```powershell
 python -m pytest -q
 python -m compileall -q src
-ruff check src tests
-mypy src/axiom_agent
+python -m ruff check src tests
+python -m mypy src/axiom_agent
 ```
 
 Keep changes scoped, add tests for behavior changes, and update the README or architecture notes

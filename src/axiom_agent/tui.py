@@ -295,7 +295,9 @@ class AxiomTUI(App[int]):
 
     def _on_agent_event(self, event: Event) -> None:
         data = event.data
-        if event.type == "plan.created":
+        if event.type in {"agent.started", "agent.resumed"}:
+            self._activity("RUN", str(data.get("run_id", ""))[:12], "bold cyan")
+        elif event.type == "plan.created":
             steps = data.get("plan", {}).get("steps", [])
             titles = " → ".join(str(step.get("title", "step")) for step in steps)
             self._activity("PLAN", titles or "Direct execution", "bold cyan")
@@ -385,11 +387,15 @@ class AxiomTUI(App[int]):
 
     def action_cancel_task(self) -> None:
         if self.agent_worker is not None:
+            if self.backend is not None and hasattr(self.backend.agent, "request_cancel"):
+                self.backend.agent.request_cancel()
             self.agent_worker.cancel()
             self._set_status("Stopping…")
 
     async def action_quit(self) -> None:
         if self.agent_worker is not None:
+            if self.backend is not None and hasattr(self.backend.agent, "request_cancel"):
+                self.backend.agent.request_cancel()
             self.agent_worker.cancel()
         self.exit(0)
 

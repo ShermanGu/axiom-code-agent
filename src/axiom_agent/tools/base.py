@@ -98,12 +98,41 @@ class ToolRegistry:
 
     async def execute(self, call: ToolCall, context: ToolContext) -> ToolResult:
         tool = self.get(call.name)
+        execution = context.services.get("execution_store")
+        run_id = context.services.get("run_id")
+        step_id = context.services.get("step_record_id")
+        attempt_id = context.services.get("attempt_id")
+        turn_id = context.services.get("turn_id")
+        record_id = None
+        if execution is not None and all((run_id, step_id, attempt_id, turn_id)):
+            record_id = execution.start_tool_call(
+                run_id=str(run_id),
+                step_id=str(step_id),
+                attempt_id=str(attempt_id),
+                turn_id=str(turn_id),
+                provider_call_id=call.id,
+                name=call.name,
+                arguments=call.arguments,
+            )
+        scope = {
+            "run_id": run_id,
+            "step_id": context.services.get("step_key"),
+            "attempt_id": attempt_id,
+            "turn_id": turn_id,
+            "tool_call_id": record_id,
+        }
         context.events.emit(
-            "tool.started", call_id=call.id, name=call.name, arguments=call.arguments
+            "tool.started", call_id=call.id, name=call.name, arguments=call.arguments, **scope
         )
         if tool is None:
             result = ToolResult(call.id, call.name, f"Unknown tool: {call.name}", is_error=True)
-            context.events.emit("tool.failed", call_id=call.id, name=call.name, error=result.output)
+            if record_id is not None and execution is not None:
+                execution.finish_tool_call(
+                    record_id, output=result.output, metadata=result.metadata, is_error=True
+                )
+            context.events.emit(
+                "tool.failed", call_id=call.id, name=call.name, error=result.output, **scope
+            )
             return result
         try:
             value = await tool.run(call.arguments, context)
@@ -112,11 +141,23 @@ class ToolRegistry:
             else:
                 output = json.dumps(value, ensure_ascii=False, default=str)
             result = ToolResult(call.id, call.name, output)
-            context.events.emit("tool.completed", call_id=call.id, name=call.name, output=output)
+            if record_id is not None and execution is not None:
+                execution.finish_tool_call(
+                    record_id, output=output, metadata=result.metadata, is_error=False
+                )
+            context.events.emit(
+                "tool.completed", call_id=call.id, name=call.name, output=output, **scope
+            )
             return result
         except Exception as exc:  # tool failures are observations, not loop failures
             result = ToolResult(call.id, call.name, f"{type(exc).__name__}: {exc}", is_error=True)
-            context.events.emit("tool.failed", call_id=call.id, name=call.name, error=result.output)
+            if record_id is not None and execution is not None:
+                execution.finish_tool_call(
+                    record_id, output=result.output, metadata=result.metadata, is_error=True
+                )
+            context.events.emit(
+                "tool.failed", call_id=call.id, name=call.name, error=result.output, **scope
+            )
             return result
 
     async def execute_many(self, calls: list[ToolCall], context: ToolContext) -> list[ToolResult]:
