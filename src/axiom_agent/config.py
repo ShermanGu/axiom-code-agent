@@ -67,6 +67,11 @@ class MemoryConfig:
 
 
 @dataclass(slots=True)
+class ExecutionConfig:
+    path: Path = Path(".axiom/runs.db")
+
+
+@dataclass(slots=True)
 class SkillsConfig:
     paths: list[Path] = field(default_factory=lambda: [Path(".axiom/skills")])
     auto_select: bool = True
@@ -96,6 +101,7 @@ class AxiomConfig:
     model: ModelConfig = field(default_factory=ModelConfig)
     workspace: WorkspaceConfig = field(default_factory=WorkspaceConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
+    execution: ExecutionConfig = field(default_factory=ExecutionConfig)
     skills: SkillsConfig = field(default_factory=SkillsConfig)
     mcp: MCPConfig = field(default_factory=MCPConfig)
     config_path: Path | None = None
@@ -111,6 +117,12 @@ class AxiomConfig:
             (self.workspace.root / memory).resolve()
             if not memory.is_absolute()
             else memory.resolve()
+        )
+        execution = self.execution.path
+        self.execution.path = (
+            (self.workspace.root / execution).resolve()
+            if not execution.is_absolute()
+            else execution.resolve()
         )
         self.skills.paths = [
             (self.workspace.root / path).resolve() if not path.is_absolute() else path.resolve()
@@ -178,6 +190,9 @@ def load_config(
     memory_values = dict(raw.get("memory", {}))
     if "path" in memory_values:
         memory_values["path"] = Path(memory_values["path"])
+    execution_values = dict(raw.get("execution", {}))
+    if "path" in execution_values:
+        execution_values["path"] = Path(execution_values["path"])
     skills_values = dict(raw.get("skills", {}))
     if "paths" in skills_values:
         skills_values["paths"] = [Path(item) for item in skills_values["paths"]]
@@ -194,6 +209,7 @@ def load_config(
         model=_section(ModelConfig, model_values),
         workspace=_section(WorkspaceConfig, workspace_values),
         memory=_section(MemoryConfig, memory_values),
+        execution=_section(ExecutionConfig, execution_values),
         skills=_section(SkillsConfig, skills_values),
         mcp=MCPConfig(servers=mcp_servers),
         config_path=config_path,

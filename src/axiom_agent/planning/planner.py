@@ -36,23 +36,31 @@ class Planner:
         enabled: bool = True,
     ) -> TaskPlan:
         if not enabled:
-            return _fallback_plan(goal)
+            return self.fallback_plan(goal)
+        request = self.build_request(goal, context=context)
+        response = await self.provider.complete(request)
+        return self.parse_response(goal, response.text)
+
+    def build_request(self, goal: str, *, context: str = "") -> ModelRequest:
         prompt = f"Goal:\n{goal}"
         if context:
             prompt += f"\n\nRelevant context:\n{context[:12_000]}"
-        response = await self.provider.complete(
-            ModelRequest(
-                instructions=PLANNER_INSTRUCTIONS,
-                input_items=[{"role": "user", "content": prompt}],
-                tools=[],
-                max_output_tokens=min(self.max_output_tokens, 4096),
-            )
+        return ModelRequest(
+            instructions=PLANNER_INSTRUCTIONS,
+            input_items=[{"role": "user", "content": prompt}],
+            tools=[],
+            max_output_tokens=min(self.max_output_tokens, 4096),
         )
+
+    def parse_response(self, goal: str, text: str) -> TaskPlan:
         try:
-            payload = _parse_json(response.text)
+            payload = _parse_json(text)
             return _validate_plan(goal, payload)
         except (ValueError, TypeError, KeyError, json.JSONDecodeError):
-            return _fallback_plan(goal)
+            return self.fallback_plan(goal)
+
+    def fallback_plan(self, goal: str) -> TaskPlan:
+        return _fallback_plan(goal)
 
 
 def _parse_json(text: str) -> dict[str, Any]:
@@ -106,4 +114,3 @@ def _fallback_plan(goal: str) -> TaskPlan:
         strategy="Execute the requested task directly and verify the result.",
         steps=[PlanStep(id="execute", title="Execute task", description=goal)],
     )
-

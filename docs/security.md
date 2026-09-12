@@ -13,7 +13,10 @@ Axiom separates application-level safeguards from actual isolation.
 - MCP tools are namespaced per server.
 - Tool failures are recorded and returned to the model rather than hidden.
 - API credentials are read from environment variables and are not written to memory by Axiom.
-- JSONL logging redacts common credential keys and token patterns and bounds large text fields.
+- SQLite and JSONL event logging redact common credential keys and token patterns and bound large
+  text fields.
+- Recovery blocks when an interrupted tool has no recorded outcome, unless the user explicitly
+  accepts replay risk with `--retry-uncertain-tools`.
 
 ## Not enforced by Axiom
 
@@ -31,8 +34,9 @@ For untrusted goals, repositories, skills, or MCP servers:
 5. Review skill instructions and MCP server provenance before enabling them.
 6. Back up or commit important work before autonomous runs.
 
-The event log still contains task text, file-edit arguments, model output, and tool output. Treat the
-`.axiom` directory as sensitive operational data even with credential-pattern redaction enabled.
+The event log and run database still contain task text, file-edit arguments, model input/output, and
+tool output. Treat the `.axiom` directory as sensitive operational data even with credential-pattern
+redaction enabled.
 
 ## Approval modes
 

@@ -13,6 +13,7 @@ from typing import Any
 from axiom_agent.app import AxiomApp
 from axiom_agent.config import AxiomConfig, load_config
 from axiom_agent.events import Event
+from axiom_agent.execution.store import ExecutionStore
 from axiom_agent.memory.store import SQLiteMemoryStore
 from axiom_agent.providers.demo import DemoProvider
 from axiom_agent.skills.loader import SkillRegistry
@@ -45,6 +46,9 @@ path = ".axiom/memory.db"
 recent_messages = 12
 retrieval_limit = 8
 
+[execution]
+path = ".axiom/runs.db"
+
 [skills]
 paths = [".axiom/skills"]
 auto_select = true
@@ -62,7 +66,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="axiom", description="A modular code agent with MCP, skills, planning, and memory."
     )
-    parser.add_argument("--version", action="version", version="Axiom 0.4.1")
+    parser.add_argument("--version", action="version", version="Axiom 0.5.0")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     init_parser = subparsers.add_parser("init", help="Initialize Axiom in a workspace")
@@ -75,6 +79,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     chat_parser = subparsers.add_parser("chat", help="Start a persistent interactive session")
     _common_run_arguments(chat_parser)
+
+    resume_parser = subparsers.add_parser("resume", help="Resume a checkpointed run")
+    resume_parser.add_argument("run_id", help="Full run ID or an unambiguous prefix")
+    resume_parser.add_argument(
+        "--retry-uncertain-tools",
+        action="store_true",
+        help="Explicitly replay a step whose interrupted tool outcome is unknown",
+    )
+    _common_run_arguments(resume_parser)
 
     tui_parser = subparsers.add_parser("tui", help="Start the full-screen terminal interface")
     tui_parser.add_argument("--config")
@@ -108,6 +121,21 @@ def build_parser() -> argparse.ArgumentParser:
     for child in (memory_list, memory_search, memory_forget):
         child.add_argument("--config")
         child.add_argument("--workspace")
+
+    runs_parser = subparsers.add_parser("runs", help="Inspect durable execution history")
+    runs_parser.add_argument(
+        "runs_command",
+        nargs="?",
+        choices=("list", "show", "export"),
+        default="list",
+    )
+    runs_parser.add_argument("run_id", nargs="?")
+    runs_parser.add_argument("--limit", type=int, default=20)
+    runs_parser.add_argument("--status")
+    runs_parser.add_argument("--output", help="JSONL path for 'runs export'")
+    runs_parser.add_argument("--json", action="store_true", dest="json_output")
+    runs_parser.add_argument("--config")
+    runs_parser.add_argument("--workspace")
 
     skills_parser = subparsers.add_parser("skills", help="Discover and inspect skills")
     skills_parser.add_argument(
@@ -166,6 +194,8 @@ async def dispatch(arguments: argparse.Namespace) -> int:
         return _doctor(config)
     if arguments.command == "memory":
         return _memory(config, arguments)
+    if arguments.command == "runs":
+        return _runs(config, arguments)
     if arguments.command == "skills":
         return _skills(config, arguments)
     if arguments.command == "mcp":
@@ -184,6 +214,13 @@ async def dispatch(arguments: argparse.Namespace) -> int:
             result = await app.agent.run(" ".join(arguments.goal))
             _print_result(result, arguments.json_output)
             return 0 if result.success else 2
+        if arguments.command == "resume":
+            result = await app.agent.resume(
+                arguments.run_id,
+                retry_uncertain_tools=arguments.retry_uncertain_tools,
+            )
+            _print_result(result, arguments.json_output)
+            return 0 if result.success else 2
         return await _chat(app, arguments.json_output)
 
 
@@ -197,7 +234,12 @@ def _init_workspace(path: Path, force: bool) -> int:
     (config_dir / "skills").mkdir(exist_ok=True)
     config_path.write_text(DEFAULT_CONFIG, encoding="utf-8", newline="")
     gitignore = workspace / ".gitignore"
-    ignore_lines = [".axiom/config.toml", ".axiom/memory.db*", ".axiom/events.jsonl"]
+    ignore_lines = [
+        ".axiom/config.toml",
+        ".axiom/memory.db*",
+        ".axiom/runs.db*",
+        ".axiom/events.jsonl",
+    ]
     existing = gitignore.read_text(encoding="utf-8") if gitignore.exists() else ""
     additions = [line for line in ignore_lines if line not in existing.splitlines()]
     if additions:
@@ -322,6 +364,73 @@ def _memory(config: AxiomConfig, arguments: argparse.Namespace) -> int:
     return 0
 
 
+def _runs(config: AxiomConfig, arguments: argparse.Namespace) -> int:
+    store = ExecutionStore(config.execution.path)
+    try:
+        if arguments.runs_command == "list":
+            records = store.list_runs(max(1, arguments.limit), arguments.status)
+            if arguments.json_output:
+                print(json.dumps([record.as_dict() for record in records], ensure_ascii=False))
+                return 0
+            if not records:
+                print("No runs recorded.")
+                return 0
+            for record in records:
+                goal = " ".join(record.goal.split())
+                if len(goal) > 80:
+                    goal = f"{goal[:77]}..."
+                print(
+                    f"{record.id[:12]}  {record.status:<11}  "
+                    f"{record.updated_at}  {goal}"
+                )
+            return 0
+
+        if not arguments.run_id:
+            print(f"Usage: axiom runs {arguments.runs_command} RUN_ID", file=sys.stderr)
+            return 2
+        if arguments.runs_command == "show":
+            detail = store.detail(arguments.run_id)
+            if arguments.json_output:
+                print(json.dumps(detail, ensure_ascii=False))
+                return 0
+            print(f"Run: {detail['id']}")
+            print(f"Status: {detail['status']}")
+            print(f"Goal: {detail['goal']}")
+            print(f"Conversation: {detail['conversation_id']}")
+            model = detail["context"].get("model", {})
+            if model:
+                print(f"Model: {model.get('provider')}:{model.get('name')}")
+            print(f"Started: {detail['started_at']}")
+            print(f"Updated: {detail['updated_at']}")
+            if detail["error"]:
+                print(f"Error: {detail['error']}")
+            print("Metrics:")
+            for stage in ("planner", "executor", "finalizer", "total"):
+                metrics = detail["metrics"].get(stage, {})
+                print(
+                    f"  {stage:<9} calls={metrics.get('model_calls', 0)} "
+                    f"duration_ms={metrics.get('duration_ms', 0)} "
+                    f"tokens={metrics.get('total_tokens', 0)}"
+                )
+            plan = detail.get("plan") or {}
+            for step in plan.get("steps", []):
+                print(f"  [{step['status']}] {step['id']}: {step['title']}")
+            return 0
+
+        output = Path(arguments.output or f"{arguments.run_id}-events.jsonl").resolve()
+        rows = store.event_rows(arguments.run_id)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(
+            "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows),
+            encoding="utf-8",
+            newline="",
+        )
+        print(f"Exported {len(rows)} event(s) to {output}")
+        return 0
+    finally:
+        store.close()
+
+
 def _skills(config: AxiomConfig, arguments: argparse.Namespace) -> int:
     registry = SkillRegistry.discover(config.skills.paths)
     skills = registry.all()
@@ -392,7 +501,10 @@ def _approval_callback(auto_approve: bool) -> Any:
 
 
 def _console_observer(event: Event) -> None:
-    if event.type == "plan.created":
+    if event.type in {"agent.started", "agent.resumed"}:
+        action = "resume" if event.type == "agent.resumed" else "run"
+        print(f"[{action}] {event.data.get('run_id')}", file=sys.stderr)
+    elif event.type == "plan.created":
         steps = event.data["plan"]["steps"]
         titles = " -> ".join(item["title"] for item in steps)
         print(f"[plan] {len(steps)} step(s): {titles}", file=sys.stderr)
@@ -411,15 +523,18 @@ def _print_result(result: Any, json_output: bool) -> None:
                 {
                     "output": result.output,
                     "success": result.success,
+                    "status": result.status,
+                    "run_id": result.run_id,
                     "conversation_id": result.conversation_id,
                     "plan": result.plan.as_dict(),
                     "usage": result.usage,
+                    "metrics": result.metrics,
                 },
                 ensure_ascii=False,
             )
         )
     else:
-        print(f"\n{result.output}")
+        print(f"\n{result.output}\n\nRun: {result.run_id}")
 
 
 if __name__ == "__main__":
