@@ -7,7 +7,7 @@ opening a new milestone and link it from this document.
 
 ## Current milestone
 
-- [`v0.5.0`](releases/v0.5.0.md) — P0-2 durable execution and recovery (in progress)
+- [`v0.5.0`](releases/v0.5.0.md) — P0-2 durable execution and recovery (completed)
 
 ## P0 — Reliable single-agent kernel
 
