@@ -92,12 +92,28 @@ axiom tui
 ```
 
 Use `Ctrl+Enter` to send a multiline prompt, `Escape` to stop the active task, `Ctrl+N` for a new
-conversation thread, `Ctrl+L` to clear the visible transcript, and `Ctrl+Q` to exit. Planning,
-steps, MCP connections, and tool calls appear in the activity pane. Commands requiring approval
-open a modal confirmation; `axiom tui --yes` automatically approves policy-gated commands.
+conversation thread, `Ctrl+R` to open run history, `Ctrl+L` to clear the visible transcript, and
+`Ctrl+Q` to exit. Planning, steps, MCP connections, and tool calls appear in the activity pane.
+Commands requiring approval open a modal confirmation; `axiom tui --yes` automatically approves
+ordinary policy-gated commands.
 
-The first TUI release updates task state and tool activity in real time. Model text is displayed
-when each model request completes; token-by-token streaming is not yet implemented.
+The **Runs** dialog lists the current workspace's durable history and shows each run's lifecycle,
+steps, attempts, tool calls, and Planner/Executor/Finalizer metrics. From the dialog you can resume
+an incomplete run, explicitly retry a blocked run, or export its sanitized events. The same actions
+have direct commands:
+
+```text
+/runs                 open run history
+/show RUN_ID           open one run's details
+/resume RUN_ID         safely resume an incomplete run
+/retry RUN_ID          confirm and retry an uncertain tool outcome
+/export RUN_ID         export events under .axiom/exports/
+```
+
+Uncertain-tool retry always opens a dedicated side-effect warning, even with `axiom tui --yes`.
+
+The TUI updates task state and tool activity in real time. Model text is displayed when each model
+request completes; token-by-token streaming is not yet implemented.
 
 ### Durable runs and recovery
 
@@ -120,7 +136,8 @@ axiom demo recovery
 
 It verifies that checkpoints persist, completed tools are not replayed, uncertain tool outcomes
 block automatic recovery, explicit retry succeeds, and the resulting history and metrics remain
-inspectable through `axiom runs show`.
+inspectable. It also leaves both demo runs in the selected workspace, so you can immediately run
+`axiom tui` and open **Runs** (or press `Ctrl+R`) to inspect and export them.
 
 Completed steps and recorded tool outputs are restored rather than replayed. If Axiom stopped while
 a tool was running, its outcome may be unknown; the run becomes `blocked` instead of silently

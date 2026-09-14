@@ -14,6 +14,11 @@ opening a new milestone and link it from this document.
 Exit condition: Axiom can inspect, edit, test, recover, and report evidence on small and medium
 repositories without silently losing state or overwriting unrelated user work.
 
+Every milestone requires an **Interface Impact Review**. Any user-facing capability must be
+implemented and tested across every affected supported interface, including CLI and TUI. A release
+may defer an interface only when its tracker names the missing surface, explains why, and assigns it
+to a later milestone; an unrecorded interface gap does not count as completed work.
+
 ### P0-1 Evaluation baseline
 
 - [x] Define a versioned, deterministic offline suite format.
@@ -35,6 +40,11 @@ repositories without silently losing state or overwriting unrelated user work.
 - [x] Distinguish failed, cancelled, interrupted, skipped, and blocked states.
 - [x] Connect EventBus to the SQLite event store while retaining JSONL export.
 - [x] Account for Planner, Executor, and Finalizer model usage and latency.
+- [x] Expose run history, details, metrics, resume, uncertain retry, and event export in the TUI.
+- [x] Add Runs button, `Ctrl+R`, and direct `/runs`, `/show`, `/resume`, `/retry`, and `/export`
+  commands.
+- [x] Keep uncertain-tool replay behind an explicit TUI warning even when `--yes` is enabled.
+- [x] Add a one-command offline recovery demo and TUI acceptance coverage.
 
 ### P0-3 Transactional code changes
 

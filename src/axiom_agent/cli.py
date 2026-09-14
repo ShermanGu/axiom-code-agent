@@ -246,6 +246,7 @@ def _init_workspace(path: Path, force: bool) -> int:
         ".axiom/memory.db*",
         ".axiom/runs.db*",
         ".axiom/events.jsonl",
+        ".axiom/exports/",
     ]
     existing = gitignore.read_text(encoding="utf-8") if gitignore.exists() else ""
     additions = [line for line in ignore_lines if line not in existing.splitlines()]
@@ -283,7 +284,8 @@ async def _demo(arguments: argparse.Namespace) -> int:
             print("\nRun IDs:")
             for name, run_id in recovery_result.run_ids.items():
                 print(f"  {name:<10} {run_id[:12]}")
-            print("\nInspect with: axiom runs show RUN_ID")
+            print("\nInspect in TUI: axiom tui, then choose Runs or press Ctrl+R")
+            print("Inspect in CLI: axiom runs show RUN_ID")
         return 0 if recovery_result.success else 1
 
     config = load_config(workspace=arguments.workspace)
