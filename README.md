@@ -64,6 +64,7 @@ axiom run "goal"                  execute one task
 axiom chat                        keep a persistent conversation thread
 axiom tui                         open the full-screen terminal interface
 axiom demo                        run planning -> tool -> memory offline
+axiom demo recovery               verify durable recovery behavior offline
 axiom eval                        run deterministic offline regression scenarios
 axiom doctor                      inspect the local setup
 axiom skills [list]               list discovered skills concisely
@@ -109,6 +110,17 @@ axiom runs show 4f2a09c71d6e
 axiom resume 4f2a09c71d6e
 axiom runs export 4f2a09c71d6e --output run-events.jsonl
 ```
+
+Run the complete P0-2 acceptance demo without a model key, MCP server, or carefully timed manual
+interruption:
+
+```powershell
+axiom demo recovery
+```
+
+It verifies that checkpoints persist, completed tools are not replayed, uncertain tool outcomes
+block automatic recovery, explicit retry succeeds, and the resulting history and metrics remain
+inspectable through `axiom runs show`.
 
 Completed steps and recorded tool outputs are restored rather than replayed. If Axiom stopped while
 a tool was running, its outcome may be unknown; the run becomes `blocked` instead of silently

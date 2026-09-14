@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import io
+import json
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
-from axiom_agent.cli import _skills, build_parser
+from axiom_agent.cli import _demo, _skills, build_parser
 from axiom_agent.config import AxiomConfig
 
 
@@ -21,6 +23,26 @@ class SkillCommandTests(unittest.TestCase):
         resumed = parser.parse_args(["resume", "abc123", "--retry-uncertain-tools"])
         self.assertEqual(resumed.run_id, "abc123")
         self.assertTrue(resumed.retry_uncertain_tools)
+
+        recovery = parser.parse_args(["demo", "recovery", "--json"])
+        self.assertEqual(recovery.scenario, "recovery")
+        self.assertTrue(recovery.json_output)
+
+    def test_recovery_demo_is_a_one_command_offline_acceptance_check(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            arguments = build_parser().parse_args(
+                ["demo", "recovery", "--workspace", directory, "--json"]
+            )
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                code = asyncio.run(_demo(arguments))
+            payload = json.loads(stdout.getvalue())
+
+            self.assertEqual(code, 0)
+            self.assertTrue(payload["success"])
+            self.assertTrue(all(payload["checks"].values()))
+            self.assertEqual(set(payload["run_ids"]), {"checkpoint", "uncertain"})
+            self.assertTrue((Path(directory) / ".axiom" / "runs.db").is_file())
 
     def test_parser_supports_legacy_list_search_and_show(self) -> None:
         parser = build_parser()

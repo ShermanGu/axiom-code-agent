@@ -96,6 +96,13 @@ def build_parser() -> argparse.ArgumentParser:
     tui_parser.add_argument("--yes", action="store_true", help="Approve policy-gated commands")
 
     demo_parser = subparsers.add_parser("demo", help="Run an offline end-to-end demo")
+    demo_parser.add_argument(
+        "scenario",
+        nargs="?",
+        choices=("workspace", "recovery"),
+        default="workspace",
+        help="Demo scenario to run (default: workspace)",
+    )
     demo_parser.add_argument("--workspace", default=".")
     demo_parser.add_argument("--json", action="store_true", dest="json_output")
 
@@ -255,6 +262,30 @@ def _init_workspace(path: Path, force: bool) -> int:
 
 
 async def _demo(arguments: argparse.Namespace) -> int:
+    if arguments.scenario == "recovery":
+        from axiom_agent.recovery_demo import run_recovery_demo
+
+        recovery_result = await run_recovery_demo(
+            load_config(workspace=arguments.workspace)
+        )
+        if arguments.json_output:
+            print(json.dumps(recovery_result.as_dict(), ensure_ascii=False))
+        else:
+            labels = {
+                "checkpoint_persisted": "Run checkpoint persisted",
+                "completed_tool_not_replayed": "Completed tool was not replayed",
+                "uncertain_tool_blocked": "Uncertain tool blocked automatic resume",
+                "explicit_retry_resumed": "Explicit retry resumed successfully",
+                "history_and_metrics_inspectable": "Run history and metrics are inspectable",
+            }
+            for name, passed in recovery_result.checks.items():
+                print(f"[{'PASS' if passed else 'FAIL'}] {labels[name]}")
+            print("\nRun IDs:")
+            for name, run_id in recovery_result.run_ids.items():
+                print(f"  {name:<10} {run_id[:12]}")
+            print("\nInspect with: axiom runs show RUN_ID")
+        return 0 if recovery_result.success else 1
+
     config = load_config(workspace=arguments.workspace)
     config.model.provider = "demo"
     config.agent.planning = True
