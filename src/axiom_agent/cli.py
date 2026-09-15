@@ -329,7 +329,7 @@ async def _eval(arguments: argparse.Namespace) -> int:
 
 async def _chat(app: AxiomApp, json_output: bool) -> int:
     conversation_id: str | None = None
-    print("Axiom chat. Type /exit to leave, /new to start a new memory thread.")
+    print("Axiom chat. Type /exit to leave, /new to start a new run.")
     while True:
         try:
             goal = await asyncio.to_thread(input, "you> ")
@@ -339,7 +339,7 @@ async def _chat(app: AxiomApp, json_output: bool) -> int:
             break
         if goal.strip() == "/new":
             conversation_id = None
-            print("Started a new conversation.")
+            print("Started a new run.")
             continue
         if not goal.strip():
             continue

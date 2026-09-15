@@ -45,6 +45,10 @@ to a later milestone; an unrecorded interface gap does not count as completed wo
   commands.
 - [x] Keep uncertain-tool replay behind an explicit TUI warning even when `--yes` is enabled.
 - [x] Add a one-command offline recovery demo and TUI acceptance coverage.
+- [x] Let users continue a completed run's saved context or resume an incomplete run directly from
+  history, and restore its transcript when switching runs.
+- [x] Use run terminology consistently in user-facing interfaces; a new run clears the TUI view.
+- [x] Keep prompt submission reliable when Windows terminals collapse modified Enter key events.
 
 ### P0-3 Transactional code changes
 

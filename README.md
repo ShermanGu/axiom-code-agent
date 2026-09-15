@@ -61,7 +61,7 @@ On macOS/Linux, activate with `source .venv/bin/activate` and export the key wit
 ```text
 axiom init [path]                  create .axiom/config.toml
 axiom run "goal"                  execute one task
-axiom chat                        keep a persistent conversation thread
+axiom chat                        keep a persistent run session
 axiom tui                         open the full-screen terminal interface
 axiom demo                        run planning -> tool -> memory offline
 axiom demo recovery               verify durable recovery behavior offline
@@ -91,21 +91,22 @@ Run the interactive interface in PowerShell, Windows Terminal, or another modern
 axiom tui
 ```
 
-Use `Ctrl+Enter` to send a multiline prompt, `Escape` to stop the active task, `Ctrl+N` for a new
-conversation thread, `Ctrl+R` to open run history, `Ctrl+L` to clear the visible transcript, and
+Use `Enter` or `Ctrl+Enter` to send, `Ctrl+J` to insert a new line, `Escape` to stop the active task,
+`Ctrl+N` for a new run, `Ctrl+R` to open run history, `Ctrl+L` to clear the visible transcript, and
 `Ctrl+Q` to exit. Planning, steps, MCP connections, and tool calls appear in the activity pane.
 Commands requiring approval open a modal confirmation; `axiom tui --yes` automatically approves
-ordinary policy-gated commands.
+ordinary policy-gated commands. Starting a new run clears the transcript and activity pane.
 
 The **Runs** dialog lists the current workspace's durable history and shows each run's lifecycle,
-steps, attempts, tool calls, and Planner/Executor/Finalizer metrics. From the dialog you can resume
-an incomplete run, explicitly retry a blocked run, or export its sanitized events. The same actions
-have direct commands:
+steps, attempts, tool calls, and Planner/Executor/Finalizer metrics. **Continue run** restores a
+completed run's saved transcript and context; **Resume run** continues an incomplete execution from
+its checkpoint. You can also explicitly retry a blocked run or export its sanitized events. The
+same actions have direct commands:
 
 ```text
 /runs                 open run history
 /show RUN_ID           open one run's details
-/resume RUN_ID         safely resume an incomplete run
+/resume RUN_ID         resume execution, or continue a completed run's context
 /retry RUN_ID          confirm and retry an uncertain tool outcome
 /export RUN_ID         export events under .axiom/exports/
 ```

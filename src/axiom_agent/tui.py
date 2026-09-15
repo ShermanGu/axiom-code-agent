@@ -35,10 +35,14 @@ from axiom_agent.execution.store import ExecutionStore, RunRecord, UnsafeResumeE
 from axiom_agent.tools.base import ApprovalCallback
 
 BackendFactory = Callable[[AxiomConfig, ApprovalCallback], Any]
+RUN_TRANSCRIPT_LIMIT = 200
 
 
 class PromptArea(TextArea):
-    BINDINGS = [Binding("ctrl+enter", "submit", "Send", show=False)]
+    BINDINGS = [
+        Binding("enter,ctrl+enter", "submit", "Send", show=False, priority=True),
+        Binding("ctrl+j", "newline", "New line", show=False, priority=True),
+    ]
 
     class Submitted(Message):
         def __init__(self, value: str) -> None:
@@ -47,6 +51,10 @@ class PromptArea(TextArea):
 
     def action_submit(self) -> None:
         self.post_message(self.Submitted(self.text))
+
+    def action_newline(self) -> None:
+        start, end = self.selection
+        self.replace("\n", start, end, maintain_selection_offset=False)
 
 
 class ApprovalScreen(ModalScreen[bool]):
@@ -109,7 +117,7 @@ class RunHistoryScreen(ModalScreen[RunAction | None]):
                 yield Button("Refresh", id="run-refresh")
                 yield Button("Export", id="run-export", disabled=True)
                 yield Button("Retry blocked", id="run-retry", variant="warning", disabled=True)
-                yield Button("Resume", id="run-resume", variant="primary", disabled=True)
+                yield Button("Resume run", id="run-resume", variant="primary", disabled=True)
                 yield Button("Close", id="run-close")
 
     def on_mount(self) -> None:
@@ -185,7 +193,9 @@ class RunHistoryScreen(ModalScreen[RunAction | None]):
 
     def _set_action_buttons(self, status: str | None) -> None:
         self.query_one("#run-export", Button).disabled = status is None
-        self.query_one("#run-resume", Button).disabled = status in {None, "completed", "blocked"}
+        resume = self.query_one("#run-resume", Button)
+        resume.label = "Continue run" if status == "completed" else "Resume run"
+        resume.disabled = status in {None, "blocked"}
         self.query_one("#run-retry", Button).disabled = status != "blocked"
 
     def _export_selected(self) -> None:
@@ -211,7 +221,7 @@ class AxiomTUI(App[int]):
     SUB_TITLE = "Code agent"
     HORIZONTAL_BREAKPOINTS = [(0, "-narrow"), (100, "-wide")]
     BINDINGS = [
-        Binding("ctrl+n", "new_thread", "New thread"),
+        Binding("ctrl+n", "new_run", "New run"),
         Binding("ctrl+r", "show_runs", "Runs"),
         Binding("ctrl+l", "clear_chat", "Clear"),
         Binding("escape", "cancel_task", "Stop"),
@@ -323,7 +333,7 @@ class AxiomTUI(App[int]):
         with Horizontal(id="body"):
             with VerticalScroll(id="conversation"):
                 welcome = Static(
-                    Text("Axiom is starting. Ctrl+Enter sends; Enter adds a new line."),
+                    Text("Axiom is starting. Enter or Ctrl+Enter sends; Ctrl+J adds a new line."),
                     id="welcome",
                     classes="message system",
                 )
@@ -343,7 +353,7 @@ class AxiomTUI(App[int]):
             )
             with Horizontal(id="composer-actions"):
                 yield Button("Runs", id="runs")
-                yield Button("New thread", id="new")
+                yield Button("New run", id="new")
                 yield Button("Stop", id="stop", variant="error", disabled=True)
                 yield Button("Send", id="send", variant="primary", disabled=True)
         yield Footer()
@@ -371,7 +381,7 @@ class AxiomTUI(App[int]):
         self.ready = True
         self._set_busy(False, "Ready")
         self.query_one("#welcome", Static).update(
-            "Ready. Ctrl+Enter sends; Enter adds a new line. Type /help for commands."
+            "Ready. Enter or Ctrl+Enter sends; Ctrl+J adds a new line. Type /help for commands."
         )
         model = f"{self.axiom_config.model.provider}:{self.axiom_config.model.name}"
         self._activity("READY", model)
@@ -392,7 +402,7 @@ class AxiomTUI(App[int]):
         elif event.button.id == "stop":
             self.action_cancel_task()
         elif event.button.id == "new":
-            await self.action_new_thread()
+            await self.action_new_run()
         elif event.button.id == "runs":
             self.action_show_runs()
 
@@ -427,7 +437,7 @@ class AxiomTUI(App[int]):
         if name in {"/exit", "/quit"}:
             await self.action_quit()
         elif name == "/new":
-            await self.action_new_thread()
+            await self.action_new_run()
         elif name == "/clear":
             await self.action_clear_chat()
         elif name in {"/runs", "/show"}:
@@ -559,8 +569,20 @@ class AxiomTUI(App[int]):
         except (KeyError, ValueError) as exc:
             await self._append_error(str(exc))
             return
+        if retry_uncertain and record.status != "blocked":
+            await self._append_error(
+                f"Run {record.id[:12]} is {record.status}, not blocked; use /resume RUN_ID."
+            )
+            return
         if record.status == "completed":
-            await self._append_error(f"Run {record.id[:12]} is already completed")
+            await self._load_run_context(
+                record,
+                notice=(
+                    f"Continued run {record.id[:12]}. Its saved context is active; "
+                    "send a prompt to continue."
+                ),
+            )
+            self._activity("RUN", f"{record.id[:12]} • context restored", "bold cyan")
             return
         if record.status == "blocked" and not retry_uncertain:
             await self._append_error(
@@ -577,9 +599,12 @@ class AxiomTUI(App[int]):
             if not approved:
                 await self._append_system("Blocked-run retry was cancelled.")
                 return
-        await self._append_system(
-            f"Resuming run {record.id[:12]}"
-            f"{' with uncertain-tool retry' if retry_uncertain else ''}."
+        await self._load_run_context(
+            record,
+            notice=(
+                f"Resuming run {record.id[:12]}"
+                f"{' with uncertain-tool retry' if retry_uncertain else ''}."
+            ),
         )
         self._set_busy(True, "Recovering…")
         self.agent_worker = self.run_worker(
@@ -612,6 +637,28 @@ class AxiomTUI(App[int]):
         # Unlike ordinary policy approvals, uncertain replay is never bypassed by --yes.
         screen = cast(Screen[object], ApprovalScreen(action, reason))
         return bool(await self.push_screen_wait(screen))
+
+    async def _load_run_context(self, record: RunRecord, *, notice: str) -> None:
+        messages: list[dict[str, Any]] = []
+        memory = getattr(self.backend, "memory", None)
+        if memory is not None and hasattr(memory, "recent_messages"):
+            messages = list(
+                memory.recent_messages(record.conversation_id, RUN_TRANSCRIPT_LIMIT)
+            )
+        self.conversation_id = record.conversation_id
+        await self._clear_run_view()
+        for message in messages:
+            role = str(message.get("role", "system"))
+            content = str(message.get("content", ""))
+            if role == "user":
+                await self._append_user(content)
+            elif role == "assistant":
+                await self._append_assistant(content)
+            else:
+                await self._append_system(f"{role.upper()}: {content}")
+        await self._append_system(notice)
+        self._set_status(f"Run {record.id[:12]} selected")
+        self.query_one("#prompt", PromptArea).focus()
 
     def _on_agent_event(self, event: Event) -> None:
         data = event.data
@@ -695,19 +742,27 @@ class AxiomTUI(App[int]):
         screen = cast(Screen[object], ApprovalScreen(action, reason))
         return bool(await self.push_screen_wait(screen))
 
-    async def action_new_thread(self) -> None:
+    async def action_new_run(self) -> None:
         if self.busy:
-            self.notify("Stop the active task before starting a new thread", severity="warning")
+            self.notify("Stop the active task before starting a new run", severity="warning")
             return
         self.conversation_id = None
-        await self._append_system("Started a new conversation thread.")
+        await self._clear_run_view()
+        await self._append_system("Started a new run.")
+        self._set_status("Ready • new run")
+        self.query_one("#prompt", PromptArea).focus()
+
+    async def _clear_run_view(self) -> None:
+        await self.query_one("#conversation", VerticalScroll).remove_children()
+        self.query_one("#activity", RichLog).clear()
+        self.query_one("#prompt", PromptArea).clear()
 
     async def action_clear_chat(self) -> None:
         if self.busy:
             self.notify("Stop the active task before clearing the chat", severity="warning")
             return
         await self.query_one("#conversation", VerticalScroll).remove_children()
-        await self._append_system("Chat display cleared. Conversation memory is unchanged.")
+        await self._append_system("Chat display cleared. Saved run context is unchanged.")
 
     def action_cancel_task(self) -> None:
         if self.agent_worker is not None:
