@@ -99,6 +99,8 @@ class _FakeBackend:
         return self
 
     async def close(self) -> None:
+        if self.execution is not None:
+            self.execution.close()
         self.closed = True
 
 
@@ -255,6 +257,12 @@ class TUITests(unittest.TestCase):
                         lambda: isinstance(app.screen, RunHistoryScreen),
                         "run history screen",
                     )
+                    await _wait_for(
+                        pilot,
+                        lambda: "Recover an interrupted task"
+                        in str(app.screen.query_one("#run-detail", Static).content),
+                        "selected run details",
+                    )
                     screen = app.screen
                     self.assertIsInstance(screen, RunHistoryScreen)
                     detail = screen.query_one("#run-detail", Static)
@@ -280,7 +288,6 @@ class TUITests(unittest.TestCase):
                         "Ctrl+R run history shortcut",
                     )
                     await pilot.press("escape")
-                store.close()
 
         asyncio.run(scenario())
 
@@ -308,6 +315,11 @@ class TUITests(unittest.TestCase):
                         lambda: isinstance(app.screen, RunHistoryScreen),
                         "run history screen",
                     )
+                    await _wait_for(
+                        pilot,
+                        lambda: not app.screen.query_one("#run-retry", Button).disabled,
+                        "blocked run actions",
+                    )
                     screen = app.screen
                     self.assertIsInstance(screen, RunHistoryScreen)
                     self.assertTrue(screen.query_one("#run-resume", Button).disabled)
@@ -325,7 +337,6 @@ class TUITests(unittest.TestCase):
                         lambda: backend.agent.resumes == [(run_id, True)] and not app.busy,
                         "confirmed blocked-run retry",
                     )
-                store.close()
 
         asyncio.run(scenario())
 
@@ -361,6 +372,12 @@ class TUITests(unittest.TestCase):
                         lambda: isinstance(app.screen, RunHistoryScreen),
                         "run history screen",
                     )
+                    await _wait_for(
+                        pilot,
+                        lambda: str(app.screen.query_one("#run-resume", Button).label)
+                        == "Continue run",
+                        "completed run action",
+                    )
                     resume = app.screen.query_one("#run-resume", Button)
                     self.assertEqual(str(resume.label), "Continue run")
                     self.assertFalse(resume.disabled)
@@ -379,7 +396,6 @@ class TUITests(unittest.TestCase):
                     await pilot.press("enter")
                     await _wait_for(pilot, lambda: not app.busy, "continued run prompt")
                     self.assertEqual(backend.agent.goals, [("Follow up", "conversation-old")])
-                store.close()
 
         asyncio.run(scenario())
 
@@ -424,7 +440,6 @@ class TUITests(unittest.TestCase):
                         lambda: backend.agent.resumes == [(run_id, False)] and not app.busy,
                         "slash-command recovery",
                     )
-                store.close()
 
         asyncio.run(scenario())
 
