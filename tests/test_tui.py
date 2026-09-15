@@ -9,6 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+from textual.css.query import NoMatches
 from textual.widgets import Button, RichLog, Static
 
 from axiom_agent.cli import build_parser
@@ -28,7 +29,12 @@ async def _wait_for(
 ) -> None:
     try:
         async with asyncio.timeout(timeout_seconds):
-            while not condition():
+            while True:
+                try:
+                    if condition():
+                        return
+                except NoMatches:
+                    pass
                 await pilot.pause(0.05)
     except TimeoutError as exc:
         raise AssertionError(f"Timed out waiting for {description}") from exc

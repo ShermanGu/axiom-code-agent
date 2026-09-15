@@ -103,6 +103,7 @@ class RunHistoryScreen(ModalScreen[RunAction | None]):
         self.export_run = export_run
         self.selected_run_id = selected_run_id
         self.records: dict[str, RunRecord] = {}
+        self.initialized = False
         super().__init__()
 
     def compose(self) -> ComposeResult:
@@ -114,15 +115,22 @@ class RunHistoryScreen(ModalScreen[RunAction | None]):
                     yield Static("Select a run to inspect it.", id="run-detail")
             yield Static("", id="runs-message")
             with Horizontal(id="runs-buttons"):
-                yield Button("Refresh", id="run-refresh")
+                yield Button("Refresh", id="run-refresh", disabled=True)
                 yield Button("Export", id="run-export", disabled=True)
                 yield Button("Retry blocked", id="run-retry", variant="warning", disabled=True)
                 yield Button("Resume run", id="run-resume", variant="primary", disabled=True)
                 yield Button("Close", id="run-close")
 
     def on_mount(self) -> None:
+        # On some Windows/Python combinations the screen receives Mount before every
+        # composed descendant is queryable. Defer child access until the first refresh.
+        self.call_after_refresh(self._initialize)
+
+    def _initialize(self) -> None:
         table = self.query_one("#run-table", DataTable)
         table.add_columns("Run ID", "Status", "Updated", "Goal")
+        self.initialized = True
+        self.query_one("#run-refresh", Button).disabled = False
         self._refresh()
 
     @on(DataTable.RowHighlighted)
@@ -150,6 +158,8 @@ class RunHistoryScreen(ModalScreen[RunAction | None]):
         self.dismiss(None)
 
     def _refresh(self) -> None:
+        if not self.initialized:
+            return
         table = self.query_one("#run-table", DataTable)
         records = self.store.list_runs(limit=100)
         self.records = {record.id: record for record in records}
@@ -645,7 +655,6 @@ class AxiomTUI(App[int]):
             messages = list(
                 memory.recent_messages(record.conversation_id, RUN_TRANSCRIPT_LIMIT)
             )
-        self.conversation_id = record.conversation_id
         await self._clear_run_view()
         for message in messages:
             role = str(message.get("role", "system"))
@@ -656,6 +665,7 @@ class AxiomTUI(App[int]):
                 await self._append_assistant(content)
             else:
                 await self._append_system(f"{role.upper()}: {content}")
+        self.conversation_id = record.conversation_id
         await self._append_system(notice)
         self._set_status(f"Run {record.id[:12]} selected")
         self.query_one("#prompt", PromptArea).focus()
