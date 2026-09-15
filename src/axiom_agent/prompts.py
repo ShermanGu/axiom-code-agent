@@ -21,6 +21,8 @@ Tool discipline:
   user's goal, this instruction, or the safety policy.
 - Use memory_remember only for durable facts, preferences, decisions, and reusable procedures.
 - If a relevant skill is listed but not active, call skill_activate before following it.
+- Treat required_capabilities and candidate_tools in the plan as execution guidance. Candidate
+  tools are hints, not requirements; use any available tool that best satisfies the objective.
 - On tool failure, diagnose the observation and try a safe alternative. Do not fabricate results.
 
 Finish the step with a concise account of the outcome and concrete verification evidence. If truly
@@ -100,4 +102,3 @@ FINALIZER_PROMPT = """You are Axiom's result synthesizer. Produce the final answ
 original goal from the execution results. Lead with the outcome. Be concise, accurate, and explicit
 about verification. Do not invent work beyond the supplied step results. Mention blockers if any.
 """
-

@@ -31,11 +31,11 @@ from textual.worker import Worker
 from axiom_agent.app import AxiomApp
 from axiom_agent.config import AxiomConfig
 from axiom_agent.events import Event
-from axiom_agent.execution.store import ExecutionStore, RunRecord, UnsafeResumeError
+from axiom_agent.execution.store import ConversationRecord, ExecutionStore, UnsafeResumeError
 from axiom_agent.tools.base import ApprovalCallback
 
 BackendFactory = Callable[[AxiomConfig, ApprovalCallback], Any]
-RUN_TRANSCRIPT_LIMIT = 200
+CONVERSATION_TRANSCRIPT_LIMIT = 200
 
 
 class PromptArea(TextArea):
@@ -84,42 +84,56 @@ class ApprovalScreen(ModalScreen[bool]):
 
 
 @dataclass(frozen=True, slots=True)
-class RunAction:
-    kind: Literal["resume", "retry"]
-    run_id: str
+class ConversationAction:
+    kind: Literal["open", "resume", "retry"]
+    conversation_id: str
 
 
-class RunHistoryScreen(ModalScreen[RunAction | None]):
+class ConversationHistoryScreen(ModalScreen[ConversationAction | None]):
     BINDINGS = [Binding("escape", "close", "Close")]
 
     def __init__(
         self,
         store: ExecutionStore,
-        export_run: Callable[[str], Path],
+        export_conversation: Callable[[str], Path],
         *,
-        selected_run_id: str | None = None,
+        selected_conversation_id: str | None = None,
     ) -> None:
         self.store = store
-        self.export_run = export_run
-        self.selected_run_id = selected_run_id
-        self.records: dict[str, RunRecord] = {}
+        self.export_conversation = export_conversation
+        self.selected_conversation_id = selected_conversation_id
+        self.records: dict[str, ConversationRecord] = {}
         self.initialized = False
         super().__init__()
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="runs-dialog"):
-            yield Label("RUN HISTORY", id="runs-title")
-            with Horizontal(id="runs-content"):
-                yield DataTable(id="run-table", cursor_type="row")
-                with VerticalScroll(id="run-detail-scroll"):
-                    yield Static("Select a run to inspect it.", id="run-detail")
-            yield Static("", id="runs-message")
-            with Horizontal(id="runs-buttons"):
-                yield Button("Refresh", id="run-refresh", disabled=True)
-                yield Button("Export", id="run-export", disabled=True)
-                yield Button("Retry blocked", id="run-retry", variant="warning", disabled=True)
-                yield Button("Resume run", id="run-resume", variant="primary", disabled=True)
-                yield Button("Close", id="run-close")
+        with Vertical(id="conversations-dialog"):
+            yield Label("CONVERSATIONS", id="conversations-title")
+            with Horizontal(id="conversations-content"):
+                yield DataTable(id="conversation-table", cursor_type="row")
+                with VerticalScroll(id="conversation-detail-scroll"):
+                    yield Static(
+                        "Select a conversation to inspect it.", id="conversation-detail"
+                    )
+            yield Static("", id="conversations-message")
+            with Horizontal(id="conversations-buttons"):
+                yield Button("Export", id="conversation-export", disabled=True)
+                yield Button(
+                    "Retry blocked", id="conversation-retry", variant="warning", disabled=True
+                )
+                yield Button(
+                    "Resume task",
+                    id="conversation-resume",
+                    variant="warning",
+                    disabled=True,
+                )
+                yield Button(
+                    "Continue",
+                    id="conversation-open",
+                    variant="primary",
+                    disabled=True,
+                )
+                yield Button("Close", id="conversation-close")
 
     def on_mount(self) -> None:
         # On some Windows/Python combinations the screen receives Mount before every
@@ -127,32 +141,36 @@ class RunHistoryScreen(ModalScreen[RunAction | None]):
         self.call_after_refresh(self._initialize)
 
     def _initialize(self) -> None:
-        table = self.query_one("#run-table", DataTable)
-        table.add_columns("Run ID", "Status", "Updated", "Goal")
+        table = self.query_one("#conversation-table", DataTable)
+        table.add_columns("Conversation ID", "Status", "Tasks", "Updated", "Title")
         self.initialized = True
-        self.query_one("#run-refresh", Button).disabled = False
         self._refresh()
 
     @on(DataTable.RowHighlighted)
-    def select_run(self, event: DataTable.RowHighlighted) -> None:
-        run_id = str(event.row_key.value)
-        if run_id in self.records:
-            self._show_detail(run_id)
+    def select_conversation(self, event: DataTable.RowHighlighted) -> None:
+        conversation_id = str(event.row_key.value)
+        if conversation_id in self.records:
+            self._show_detail(conversation_id)
 
     @on(Button.Pressed)
     def handle_button(self, event: Button.Pressed) -> None:
         button_id = event.button.id
-        if button_id == "run-close":
+        if button_id == "conversation-close":
             self.dismiss(None)
-        elif button_id == "run-refresh":
-            self._refresh()
-        elif button_id == "run-export":
+        elif button_id == "conversation-export":
             self._export_selected()
-        elif button_id in {"run-resume", "run-retry"} and self.selected_run_id:
-            kind: Literal["resume", "retry"] = (
-                "retry" if button_id == "run-retry" else "resume"
-            )
-            self.dismiss(RunAction(kind, self.selected_run_id))
+        elif (
+            button_id
+            in {"conversation-open", "conversation-resume", "conversation-retry"}
+            and self.selected_conversation_id
+        ):
+            kinds: dict[str, Literal["open", "resume", "retry"]] = {
+                "conversation-open": "open",
+                "conversation-resume": "resume",
+                "conversation-retry": "retry",
+            }
+            kind = kinds[button_id]
+            self.dismiss(ConversationAction(kind, self.selected_conversation_id))
 
     def action_close(self) -> None:
         self.dismiss(None)
@@ -160,65 +178,73 @@ class RunHistoryScreen(ModalScreen[RunAction | None]):
     def _refresh(self) -> None:
         if not self.initialized:
             return
-        table = self.query_one("#run-table", DataTable)
-        records = self.store.list_runs(limit=100)
+        table = self.query_one("#conversation-table", DataTable)
+        records = self.store.list_conversations(limit=100)
         self.records = {record.id: record for record in records}
         table.clear()
         selected_index = 0
-        requested_id = self.selected_run_id
+        requested_id = self.selected_conversation_id
         if requested_id:
             try:
-                requested_id = self.store.resolve_run_id(requested_id)
+                requested_id = self.store.resolve_conversation_id(requested_id)
             except (KeyError, ValueError):
                 requested_id = None
         for index, record in enumerate(records):
-            goal = " ".join(record.goal.split())
+            title = " ".join(record.title.split())
             table.add_row(
                 record.id[:12],
                 record.status,
+                str(record.execution_count),
                 _short_time(record.updated_at),
-                _truncate(goal, 52),
+                _truncate(title, 44),
                 key=record.id,
             )
             if record.id == requested_id:
                 selected_index = index
-        self.query_one("#runs-message", Static).update(
-            f"{len(records)} run(s) • newest first"
+        self.query_one("#conversations-message", Static).update(
+            f"{len(records)} conversation(s) • newest first"
             if records
-            else "No runs recorded in this workspace."
+            else "No conversations recorded in this workspace."
         )
         if records:
             table.move_cursor(row=selected_index, animate=False)
             self._show_detail(records[selected_index].id)
         else:
-            self.selected_run_id = None
-            self.query_one("#run-detail", Static).update("No run selected.")
+            self.selected_conversation_id = None
+            self.query_one("#conversation-detail", Static).update(
+                "No conversation selected."
+            )
             self._set_action_buttons(None)
 
-    def _show_detail(self, run_id: str) -> None:
-        detail = self.store.detail(run_id)
-        self.selected_run_id = str(detail["id"])
-        self.query_one("#run-detail", Static).update(Text(_format_run_detail(detail)))
+    def _show_detail(self, conversation_id: str) -> None:
+        detail = self.store.conversation_detail(conversation_id)
+        self.selected_conversation_id = str(detail["id"])
+        self.query_one("#conversation-detail", Static).update(
+            Text(_format_conversation_detail(detail))
+        )
         self._set_action_buttons(str(detail["status"]))
 
     def _set_action_buttons(self, status: str | None) -> None:
-        self.query_one("#run-export", Button).disabled = status is None
-        resume = self.query_one("#run-resume", Button)
-        resume.label = "Continue run" if status == "completed" else "Resume run"
-        resume.disabled = status in {None, "blocked"}
-        self.query_one("#run-retry", Button).disabled = status != "blocked"
+        self.query_one("#conversation-export", Button).disabled = status is None
+        self.query_one("#conversation-open", Button).disabled = status is None
+        self.query_one("#conversation-resume", Button).disabled = status in {
+            None,
+            "completed",
+            "blocked",
+        }
+        self.query_one("#conversation-retry", Button).disabled = status != "blocked"
 
     def _export_selected(self) -> None:
-        if not self.selected_run_id:
+        if not self.selected_conversation_id:
             return
         try:
-            output = self.export_run(self.selected_run_id)
+            output = self.export_conversation(self.selected_conversation_id)
         except Exception as exc:
-            self.query_one("#runs-message", Static).update(
+            self.query_one("#conversations-message", Static).update(
                 Text(f"Export failed: {type(exc).__name__}: {exc}", style="bold red")
             )
             return
-        self.query_one("#runs-message", Static).update(f"Exported to {output}")
+        self.query_one("#conversations-message", Static).update(f"Exported to {output}")
         self.notify(f"Exported {output.name}")
 
 
@@ -231,8 +257,8 @@ class AxiomTUI(App[int]):
     SUB_TITLE = "Code agent"
     HORIZONTAL_BREAKPOINTS = [(0, "-narrow"), (100, "-wide")]
     BINDINGS = [
-        Binding("ctrl+n", "new_run", "New run"),
-        Binding("ctrl+r", "show_runs", "Runs"),
+        Binding("ctrl+n", "new_conversation", "New conversation"),
+        Binding("ctrl+r", "show_conversations", "Conversations"),
         Binding("ctrl+l", "clear_chat", "Clear"),
         Binding("escape", "cancel_task", "Stop"),
         Binding("ctrl+q", "quit", "Quit"),
@@ -272,7 +298,7 @@ class AxiomTUI(App[int]):
     #prompt:focus { border: round #38bdf8; }
     #composer-actions { height: 3; align: right middle; }
     #composer-actions Button { width: 14; margin-left: 1; }
-    ApprovalScreen, RunHistoryScreen { align: center middle; background: #000000 65%; }
+    ApprovalScreen, ConversationHistoryScreen { align: center middle; background: #000000 65%; }
     #approval-dialog {
         width: 78;
         max-width: 92%;
@@ -293,7 +319,7 @@ class AxiomTUI(App[int]):
     }
     #approval-buttons { height: 3; align: right middle; margin-top: 1; }
     #approval-buttons Button { width: 16; margin-left: 1; }
-    #runs-dialog {
+    #conversations-dialog {
         width: 112;
         max-width: 96%;
         height: 90%;
@@ -301,24 +327,28 @@ class AxiomTUI(App[int]):
         background: #111923;
         border: round #38bdf8;
     }
-    #runs-title { height: 2; color: #7dd3fc; text-style: bold; }
-    #runs-content { height: 1fr; }
-    #run-table { width: 58%; border: solid #334155; }
-    #run-detail-scroll {
+    #conversations-title { height: 2; color: #7dd3fc; text-style: bold; }
+    #conversations-content { height: 1fr; }
+    #conversation-table { width: 62%; border: solid #334155; }
+    #conversation-detail-scroll {
         width: 42%;
         padding: 0 1;
         margin-left: 1;
         background: #0b0f14;
         border: solid #334155;
     }
-    #run-detail { height: auto; padding: 1; }
-    #runs-message { height: 2; padding-top: 1; color: #9fb0c3; }
-    #runs-buttons { height: 3; align: right middle; }
-    #runs-buttons Button { width: 16; margin-left: 1; }
-    Screen.-narrow #runs-dialog { width: 96%; height: 94%; }
-    Screen.-narrow #runs-content { layout: vertical; }
-    Screen.-narrow #run-table { width: 1fr; height: 55%; }
-    Screen.-narrow #run-detail-scroll { width: 1fr; height: 45%; margin-left: 0; }
+    #conversation-detail { height: auto; padding: 1; }
+    #conversations-message { height: 2; padding-top: 1; color: #9fb0c3; }
+    #conversations-buttons { height: 3; align: right middle; }
+    #conversations-buttons Button { width: 16; margin-left: 1; }
+    Screen.-narrow #conversations-dialog { width: 96%; height: 94%; }
+    Screen.-narrow #conversations-content { layout: vertical; }
+    Screen.-narrow #conversation-table { width: 1fr; height: 55%; }
+    Screen.-narrow #conversation-detail-scroll {
+        width: 1fr;
+        height: 45%;
+        margin-left: 0;
+    }
     """
 
     def __init__(
@@ -362,8 +392,8 @@ class AxiomTUI(App[int]):
                 disabled=True,
             )
             with Horizontal(id="composer-actions"):
-                yield Button("Runs", id="runs")
-                yield Button("New run", id="new")
+                yield Button("Conversations", id="conversations")
+                yield Button("New conversation", id="new")
                 yield Button("Stop", id="stop", variant="error", disabled=True)
                 yield Button("Send", id="send", variant="primary", disabled=True)
         yield Footer()
@@ -412,9 +442,9 @@ class AxiomTUI(App[int]):
         elif event.button.id == "stop":
             self.action_cancel_task()
         elif event.button.id == "new":
-            await self.action_new_run()
-        elif event.button.id == "runs":
-            self.action_show_runs()
+            await self.action_new_conversation()
+        elif event.button.id == "conversations":
+            self.action_show_conversations()
 
     async def _submit(self, raw: str) -> None:
         text = raw.strip()
@@ -447,30 +477,37 @@ class AxiomTUI(App[int]):
         if name in {"/exit", "/quit"}:
             await self.action_quit()
         elif name == "/new":
-            await self.action_new_run()
+            await self.action_new_conversation()
         elif name == "/clear":
             await self.action_clear_chat()
-        elif name in {"/runs", "/show"}:
-            self.action_show_runs(value or None)
+        elif name in {"/conversations", "/show"}:
+            self.action_show_conversations(value or None)
+        elif name == "/continue":
+            if not value:
+                await self._append_error(f"Usage: {name} CONVERSATION_ID")
+            else:
+                await self._open_conversation(value)
         elif name in {"/resume", "/retry"}:
             if not value:
-                await self._append_error(f"Usage: {name} RUN_ID")
+                await self._append_error(f"Usage: {name} CONVERSATION_ID")
             else:
                 self._schedule_resume(value, retry_uncertain=name == "/retry")
         elif name == "/export":
             if not value:
-                await self._append_error("Usage: /export RUN_ID")
+                await self._append_error("Usage: /export CONVERSATION_ID")
             else:
                 try:
-                    output = self._export_run(value)
+                    output = self._export_conversation(value)
                 except Exception as exc:
                     await self._append_error(f"Export failed: {type(exc).__name__}: {exc}")
                 else:
-                    await self._append_system(f"Exported run events to {output}")
+                    await self._append_system(f"Exported conversation events to {output}")
         elif name == "/help":
             await self._append_system(
-                "Commands: /runs, /show RUN_ID, /resume RUN_ID, /retry RUN_ID, "
-                "/export RUN_ID, /new, /clear, /help, /exit"
+                "Commands: /conversations, /show CONVERSATION_ID, "
+                "/continue CONVERSATION_ID, /resume CONVERSATION_ID, "
+                "/retry CONVERSATION_ID, "
+                "/export CONVERSATION_ID, /new, /clear, /help, /exit"
             )
         else:
             await self._append_error(f"Unknown command: {name}")
@@ -486,7 +523,10 @@ class AxiomTUI(App[int]):
             usage = _format_usage(result.usage)
             outcome = "Completed" if result.success else "Incomplete"
             self._activity("DONE", f"{outcome}{f' • {usage}' if usage else ''}")
-            status = f"{outcome}{f' • {usage}' if usage else ''}"
+            status = (
+                f"{outcome} • conversation {result.conversation_id[:12]}"
+                f"{f' • {usage}' if usage else ''}"
+            )
         except asyncio.CancelledError:
             status = "Task stopped"
             raise
@@ -498,20 +538,25 @@ class AxiomTUI(App[int]):
             self.agent_worker = None
             self._set_busy(False, status)
 
-    async def _resume_run(self, run_id: str, *, retry_uncertain_tools: bool) -> None:
+    async def _resume_conversation(
+        self, conversation_id: str, *, retry_uncertain_tools: bool
+    ) -> None:
         status = "Ready"
         try:
             if self.backend is None:
                 raise RuntimeError("Axiom backend is not ready")
-            result = await self.backend.agent.resume(
-                run_id, retry_uncertain_tools=retry_uncertain_tools
+            result = await self.backend.agent.resume_conversation(
+                conversation_id, retry_uncertain_tools=retry_uncertain_tools
             )
             self.conversation_id = result.conversation_id
             await self._append_assistant(result.output)
             usage = _format_usage(result.usage)
             outcome = "Recovered" if result.success else "Recovery incomplete"
             self._activity("DONE", f"{outcome}{f' • {usage}' if usage else ''}")
-            status = f"{outcome}{f' • {usage}' if usage else ''}"
+            status = (
+                f"{outcome} • conversation {result.conversation_id[:12]}"
+                f"{f' • {usage}' if usage else ''}"
+            )
         except asyncio.CancelledError:
             status = "Recovery stopped"
             raise
@@ -527,36 +572,45 @@ class AxiomTUI(App[int]):
             self.agent_worker = None
             self._set_busy(False, status)
 
-    def action_show_runs(self, selected_run_id: str | None = None) -> None:
+    def action_show_conversations(
+        self, selected_conversation_id: str | None = None
+    ) -> None:
         if not self.ready or self.backend is None:
             self.notify("Axiom is still starting", severity="warning")
             return
         if self.busy:
-            self.notify("Stop the active task before opening run history", severity="warning")
+            self.notify(
+                "Stop the active task before opening conversations", severity="warning"
+            )
             return
         self.run_worker(
-            self._show_runs(selected_run_id),
-            name="run-history",
-            group="run-history",
+            self._show_conversations(selected_conversation_id),
+            name="conversation-history",
+            group="conversation-history",
             exclusive=True,
             exit_on_error=False,
         )
 
-    async def _show_runs(self, selected_run_id: str | None) -> None:
+    async def _show_conversations(self, selected_conversation_id: str | None) -> None:
         if self.backend is None:
             return
-        screen = RunHistoryScreen(
+        screen = ConversationHistoryScreen(
             self.backend.execution,
-            self._export_run,
-            selected_run_id=selected_run_id,
+            self._export_conversation,
+            selected_conversation_id=selected_conversation_id,
         )
         action = await self.push_screen_wait(screen)
         if action is not None:
-            await self._request_resume(
-                action.run_id, retry_uncertain=action.kind == "retry"
-            )
+            if action.kind == "open":
+                await self._open_conversation(action.conversation_id)
+            else:
+                await self._request_resume(
+                    action.conversation_id, retry_uncertain=action.kind == "retry"
+                )
 
-    def _schedule_resume(self, run_id: str, *, retry_uncertain: bool) -> None:
+    def _schedule_resume(
+        self, conversation_id: str, *, retry_uncertain: bool
+    ) -> None:
         if not self.ready or self.backend is None:
             self.notify("Axiom is still starting", severity="warning")
             return
@@ -564,71 +618,100 @@ class AxiomTUI(App[int]):
             self.notify("A task is already running", severity="warning")
             return
         self.run_worker(
-            self._request_resume(run_id, retry_uncertain=retry_uncertain),
-            name="resume-request",
-            group="run-history",
+            self._request_resume(conversation_id, retry_uncertain=retry_uncertain),
+            name="conversation-request",
+            group="conversation-history",
             exclusive=True,
             exit_on_error=False,
         )
 
-    async def _request_resume(self, run_id: str, *, retry_uncertain: bool) -> None:
+    async def _open_conversation(self, conversation_id: str) -> None:
         if self.backend is None:
             return
         try:
-            record = self.backend.execution.get_run(run_id)
+            conversation = self.backend.execution.get_conversation(conversation_id)
+        except (KeyError, ValueError) as exc:
+            await self._append_error(str(exc))
+            return
+        if conversation.status == "completed":
+            notice = (
+                f"Continued conversation {conversation.id[:12]}. Its saved context is active; "
+                "send a prompt to continue."
+            )
+        else:
+            notice = (
+                f"Opened conversation {conversation.id[:12]}. Its latest task is "
+                f"{conversation.status} and was not resumed; choose Resume task to recover it, "
+                "or send a new prompt to move on."
+            )
+        await self._load_conversation_context(
+            conversation.id,
+            notice=notice,
+        )
+        self._activity("CHAT", f"{conversation.id[:12]} • context restored", "bold cyan")
+
+    async def _request_resume(
+        self, conversation_id: str, *, retry_uncertain: bool
+    ) -> None:
+        if self.backend is None:
+            return
+        try:
+            conversation = self.backend.execution.get_conversation(conversation_id)
+            record = self.backend.execution.latest_run_for_conversation(conversation.id)
         except (KeyError, ValueError) as exc:
             await self._append_error(str(exc))
             return
         if retry_uncertain and record.status != "blocked":
             await self._append_error(
-                f"Run {record.id[:12]} is {record.status}, not blocked; use /resume RUN_ID."
+                f"Conversation {conversation.id[:12]} is {record.status}, not blocked; "
+                "use /resume CONVERSATION_ID to recover its latest task."
             )
             return
         if record.status == "completed":
-            await self._load_run_context(
-                record,
-                notice=(
-                    f"Continued run {record.id[:12]}. Its saved context is active; "
-                    "send a prompt to continue."
-                ),
+            await self._append_error(
+                f"Conversation {conversation.id[:12]} has no incomplete task. "
+                "Use /continue CONVERSATION_ID to continue chatting."
             )
-            self._activity("RUN", f"{record.id[:12]} • context restored", "bold cyan")
             return
         if record.status == "blocked" and not retry_uncertain:
             await self._append_error(
-                f"Run {record.id[:12]} is blocked because a tool outcome is uncertain. "
-                "Open Runs and choose Retry blocked, or use /retry RUN_ID."
+                f"Conversation {conversation.id[:12]} is blocked because a tool outcome is "
+                "uncertain. Open Conversations and choose Retry blocked, or use "
+                "/retry CONVERSATION_ID."
             )
             return
         if retry_uncertain:
             approved = await self._confirm_uncertain_retry(
-                f"Retry uncertain tools for run {record.id[:12]}",
+                f"Retry uncertain tools for conversation {conversation.id[:12]}",
                 "The interrupted tool may already have changed files or external systems. "
-                "Retrying can repeat those side effects. Inspect the run and workspace first.",
+                "Retrying can repeat those side effects. Inspect the conversation and workspace "
+                "first.",
             )
             if not approved:
-                await self._append_system("Blocked-run retry was cancelled.")
+                await self._append_system("Blocked-conversation retry was cancelled.")
                 return
-        await self._load_run_context(
-            record,
+        await self._load_conversation_context(
+            conversation.id,
             notice=(
-                f"Resuming run {record.id[:12]}"
+                f"Resuming conversation {conversation.id[:12]}"
                 f"{' with uncertain-tool retry' if retry_uncertain else ''}."
             ),
         )
         self._set_busy(True, "Recovering…")
         self.agent_worker = self.run_worker(
-            self._resume_run(record.id, retry_uncertain_tools=retry_uncertain),
-            name="agent-resume",
+            self._resume_conversation(
+                conversation.id, retry_uncertain_tools=retry_uncertain
+            ),
+            name="conversation-resume",
             group="agent",
             exit_on_error=False,
         )
 
-    def _export_run(self, run_id: str) -> Path:
+    def _export_conversation(self, conversation_id: str) -> Path:
         if self.backend is None:
             raise RuntimeError("Axiom backend is not ready")
-        resolved = self.backend.execution.resolve_run_id(run_id)
-        rows = self.backend.execution.event_rows(resolved)
+        resolved = self.backend.execution.resolve_conversation_id(conversation_id)
+        rows = self.backend.execution.conversation_event_rows(resolved)
         output = (
             self.axiom_config.workspace.root
             / ".axiom"
@@ -648,14 +731,18 @@ class AxiomTUI(App[int]):
         screen = cast(Screen[object], ApprovalScreen(action, reason))
         return bool(await self.push_screen_wait(screen))
 
-    async def _load_run_context(self, record: RunRecord, *, notice: str) -> None:
+    async def _load_conversation_context(
+        self, conversation_id: str, *, notice: str
+    ) -> None:
         messages: list[dict[str, Any]] = []
         memory = getattr(self.backend, "memory", None)
         if memory is not None and hasattr(memory, "recent_messages"):
             messages = list(
-                memory.recent_messages(record.conversation_id, RUN_TRANSCRIPT_LIMIT)
+                memory.recent_messages(
+                    conversation_id, CONVERSATION_TRANSCRIPT_LIMIT
+                )
             )
-        await self._clear_run_view()
+        await self._clear_conversation_view()
         for message in messages:
             role = str(message.get("role", "system"))
             content = str(message.get("content", ""))
@@ -665,16 +752,22 @@ class AxiomTUI(App[int]):
                 await self._append_assistant(content)
             else:
                 await self._append_system(f"{role.upper()}: {content}")
-        self.conversation_id = record.conversation_id
+        self.conversation_id = conversation_id
         await self._append_system(notice)
-        self._set_status(f"Run {record.id[:12]} selected")
+        self._set_status(f"Conversation {conversation_id[:12]} selected")
         self.query_one("#prompt", PromptArea).focus()
 
     def _on_agent_event(self, event: Event) -> None:
         data = event.data
         if event.type in {"agent.started", "agent.resumed"}:
-            label = "RESUME" if event.type == "agent.resumed" else "RUN"
-            self._activity(label, str(data.get("run_id", ""))[:12], "bold cyan")
+            label = "RESUME" if event.type == "agent.resumed" else "TASK"
+            conversation_id = str(data.get("conversation_id", self.conversation_id or ""))
+            message = (
+                f"conversation {conversation_id[:12]}"
+                if conversation_id
+                else "execution started"
+            )
+            self._activity(label, message, "bold cyan")
         elif event.type == "plan.created":
             steps = data.get("plan", {}).get("steps", [])
             titles = " → ".join(str(step.get("title", "step")) for step in steps)
@@ -714,7 +807,7 @@ class AxiomTUI(App[int]):
         self.query_one("#prompt", PromptArea).disabled = busy or not self.ready
         self.query_one("#send", Button).disabled = busy or not self.ready
         self.query_one("#new", Button).disabled = busy or not self.ready
-        self.query_one("#runs", Button).disabled = busy or not self.ready
+        self.query_one("#conversations", Button).disabled = busy or not self.ready
         self.query_one("#stop", Button).disabled = not busy
         self._set_status(status)
 
@@ -752,17 +845,20 @@ class AxiomTUI(App[int]):
         screen = cast(Screen[object], ApprovalScreen(action, reason))
         return bool(await self.push_screen_wait(screen))
 
-    async def action_new_run(self) -> None:
+    async def action_new_conversation(self) -> None:
         if self.busy:
-            self.notify("Stop the active task before starting a new run", severity="warning")
+            self.notify(
+                "Stop the active task before starting a new conversation",
+                severity="warning",
+            )
             return
         self.conversation_id = None
-        await self._clear_run_view()
-        await self._append_system("Started a new run.")
-        self._set_status("Ready • new run")
+        await self._clear_conversation_view()
+        await self._append_system("Started a new conversation.")
+        self._set_status("Ready • new conversation")
         self.query_one("#prompt", PromptArea).focus()
 
-    async def _clear_run_view(self) -> None:
+    async def _clear_conversation_view(self) -> None:
         await self.query_one("#conversation", VerticalScroll).remove_children()
         self.query_one("#activity", RichLog).clear()
         self.query_one("#prompt", PromptArea).clear()
@@ -772,7 +868,9 @@ class AxiomTUI(App[int]):
             self.notify("Stop the active task before clearing the chat", severity="warning")
             return
         await self.query_one("#conversation", VerticalScroll).remove_children()
-        await self._append_system("Chat display cleared. Saved run context is unchanged.")
+        await self._append_system(
+            "Chat display cleared. Saved conversation context is unchanged."
+        )
 
     def action_cancel_task(self) -> None:
         if self.agent_worker is not None:
@@ -797,32 +895,17 @@ def _truncate(value: str, limit: int) -> str:
     return value if len(value) <= limit else f"{value[: limit - 1]}…"
 
 
-def _format_run_detail(detail: dict[str, Any]) -> str:
+def _format_conversation_detail(detail: dict[str, Any]) -> str:
     lines = [
-        f"Run      {str(detail['id'])[:12]}",
-        f"Status   {detail['status']}",
-        f"Started  {_short_time(str(detail['started_at']))}",
-        f"Updated  {_short_time(str(detail['updated_at']))}",
+        f"Conversation  {detail['id']}",
+        f"Status        {detail['status']}",
+        f"Tasks         {detail['execution_count']}",
+        f"Started       {_short_time(str(detail['created_at']))}",
+        f"Updated       {_short_time(str(detail['updated_at']))}",
     ]
-    model = detail.get("context", {}).get("model", {})
-    if model:
-        lines.append(f"Model    {model.get('provider')}:{model.get('name')}")
-    lines.extend(("", "Goal", str(detail["goal"])))
-    if detail.get("error"):
-        lines.extend(("", "Error", str(detail["error"])))
+    lines.extend(("", "Title", str(detail["title"])))
 
-    lines.extend(("", "Steps"))
-    steps = (detail.get("plan") or {}).get("steps", [])
-    if steps:
-        for step in steps:
-            lines.append(
-                f"[{step.get('status', '?')}] {step.get('id', 'step')} — "
-                f"{step.get('title', '')}"
-            )
-    else:
-        lines.append("(No plan recorded)")
-
-    lines.extend(("", "Model metrics"))
+    lines.extend(("", "Conversation metrics"))
     metrics = detail.get("metrics", {})
     for stage in ("planner", "executor", "finalizer", "total"):
         values = metrics.get(stage, {})
@@ -833,21 +916,20 @@ def _format_run_detail(detail: dict[str, Any]) -> str:
             f"latency={values.get('duration_ms', 0)}ms"
         )
 
-    tools = detail.get("tool_calls", [])
-    lines.extend(("", f"Tool calls ({len(tools)})"))
-    if tools:
-        for tool in tools:
-            lines.append(f"[{tool.get('status', '?')}] {tool.get('name', 'tool')}")
-    else:
-        lines.append("(None)")
-
-    attempts = detail.get("attempts", [])
-    lines.extend(("", f"Attempts ({len(attempts)})"))
-    for attempt in attempts:
+    executions = detail.get("executions", [])
+    lines.extend(("", f"Tasks ({len(executions)})"))
+    for execution in executions:
+        sequence = execution.get("sequence", "?")
+        status = execution.get("status", "?")
+        lines.append(f"#{sequence} [{status}] {execution.get('goal', '')}")
+        steps = (execution.get("plan") or {}).get("steps", [])
+        tools = execution.get("tool_calls", [])
+        turns = execution.get("turns", [])
         lines.append(
-            f"[{attempt.get('status', '?')}] {attempt.get('step', 'step')} "
-            f"#{attempt.get('number', '?')}"
+            f"    steps={len(steps)} model_calls={len(turns)} tool_calls={len(tools)}"
         )
+        if execution.get("error"):
+            lines.append(f"    error: {execution['error']}")
     return "\n".join(lines)
 
 

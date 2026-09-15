@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -144,6 +145,106 @@ class _FailingProvider(ModelProvider):
 
 
 class ExecutionTests(unittest.TestCase):
+    def test_existing_checkpoint_database_gets_plan_capability_columns(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "runs.db"
+            connection = sqlite3.connect(path)
+            connection.execute(
+                """CREATE TABLE steps (
+                    id TEXT PRIMARY KEY,
+                    run_id TEXT NOT NULL,
+                    plan_id TEXT NOT NULL,
+                    step_key TEXT NOT NULL,
+                    sequence INTEGER NOT NULL,
+                    title TEXT NOT NULL,
+                    description TEXT NOT NULL,
+                    depends_on TEXT NOT NULL DEFAULT '[]',
+                    status TEXT NOT NULL,
+                    result TEXT NOT NULL DEFAULT '',
+                    error TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    started_at TEXT,
+                    ended_at TEXT
+                )"""
+            )
+            connection.close()
+
+            store = ExecutionStore(path)
+            store.close()
+            connection = sqlite3.connect(path)
+            columns = {
+                str(row[1])
+                for row in connection.execute("PRAGMA table_info(steps)").fetchall()
+            }
+            connection.close()
+            self.assertIn("required_capabilities", columns)
+            self.assertIn("candidate_tools", columns)
+
+    def test_conversation_groups_multiple_task_executions(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = ExecutionStore(Path(directory) / "runs.db")
+            try:
+                first = store.create_run("conversation-main", "First question", {})
+                store.record_event(Event("agent.started", {"run_id": first}))
+                store.finish_run(first, "completed", output="First answer")
+                second = store.create_run("conversation-main", "Follow-up question", {})
+                store.record_event(Event("agent.started", {"run_id": second}))
+                store.interrupt_run(second, "interrupted", "Task interrupted")
+                other = store.create_run("conversation-other", "Other question", {})
+                store.finish_run(other, "completed", output="Other answer")
+
+                conversations = store.list_conversations()
+                self.assertEqual(len(conversations), 2)
+                main = store.get_conversation("conversation-main")
+                self.assertEqual(main.title, "First question")
+                self.assertEqual(main.latest_goal, "Follow-up question")
+                self.assertEqual(main.execution_count, 2)
+                self.assertEqual(main.status, "interrupted")
+                self.assertEqual(store.latest_run_for_conversation(main.id).id, second)
+
+                detail = store.conversation_detail(main.id)
+                self.assertEqual(
+                    [item["goal"] for item in detail["executions"]],
+                    ["First question", "Follow-up question"],
+                )
+                self.assertNotIn("id", detail["executions"][0])
+                self.assertEqual(
+                    len(store.conversation_event_rows("conversation-main")), 2
+                )
+            finally:
+                store.close()
+
+    def test_plan_capability_hints_survive_checkpoint_reload(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "runs.db"
+            store = ExecutionStore(path)
+            run_id = store.create_run("conversation", "goal", {})
+            store.save_plan(
+                run_id,
+                TaskPlan(
+                    "goal",
+                    [
+                        PlanStep(
+                            "mail",
+                            "Read mail",
+                            "Read today's messages",
+                            required_capabilities=["read mailbox data"],
+                            candidate_tools=["mcp__mail__search_email"],
+                        )
+                    ],
+                ),
+            )
+            store.close()
+
+            reopened = ExecutionStore(path)
+            try:
+                step = reopened.get_run(run_id).plan.steps[0]  # type: ignore[union-attr]
+                self.assertEqual(step.required_capabilities, ["read mailbox data"])
+                self.assertEqual(step.candidate_tools, ["mcp__mail__search_email"])
+            finally:
+                reopened.close()
+
     def test_run_persists_hierarchy_events_and_stage_metrics(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             workspace = Path(directory)
@@ -184,11 +285,13 @@ class ExecutionTests(unittest.TestCase):
                     interrupted = app.execution.list_runs(1)[0]
                     self.assertEqual(interrupted.status, "interrupted")
                     run_id = interrupted.id
+                    conversation_id = interrupted.conversation_id
 
                 resumed_provider = _ResumeProvider()
                 async with AxiomApp(config, provider=resumed_provider) as app:
-                    result = await app.agent.resume(run_id)
+                    result = await app.agent.resume_conversation(conversation_id)
                     self.assertTrue(result.success)
+                    self.assertEqual(result.conversation_id, conversation_id)
                     self.assertTrue(resumed_provider.saw_tool_output)
                     detail = app.execution.detail(run_id)
                     self.assertEqual(len(detail["tool_calls"]), 1)

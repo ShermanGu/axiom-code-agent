@@ -35,20 +35,24 @@ to a later milestone; an unrecorded interface gap does not count as completed wo
 
 ### P0-2 Durable execution and recovery
 
-- [x] Persist runs, plans, steps, attempts, turns, and tool calls with stable IDs.
-- [x] Checkpoint every state transition and resume an interrupted run safely.
+- [x] Persist internal task executions, plans, steps, attempts, turns, and tool calls with stable IDs.
+- [x] Checkpoint every state transition and resume an interrupted task safely.
 - [x] Distinguish failed, cancelled, interrupted, skipped, and blocked states.
 - [x] Connect EventBus to the SQLite event store while retaining JSONL export.
 - [x] Account for Planner, Executor, and Finalizer model usage and latency.
-- [x] Expose run history, details, metrics, resume, uncertain retry, and event export in the TUI.
-- [x] Add Runs button, `Ctrl+R`, and direct `/runs`, `/show`, `/resume`, `/retry`, and `/export`
-  commands.
+- [x] Expose conversation history, task details, metrics, continuation, uncertain retry, and event
+  export in the TUI.
+- [x] Add Conversations, `Ctrl+R`, and direct `/conversations`, `/show`, `/continue`, `/resume`,
+  `/retry`, and `/export` commands.
 - [x] Keep uncertain-tool replay behind an explicit TUI warning even when `--yes` is enabled.
 - [x] Add a one-command offline recovery demo and TUI acceptance coverage.
-- [x] Let users continue a completed run's saved context or resume an incomplete run directly from
-  history, and restore its transcript when switching runs.
-- [x] Use run terminology consistently in user-facing interfaces; a new run clears the TUI view.
+- [x] Group multiple task executions under a user-facing conversation ID; let users switch,
+  continue, and safely recover the latest incomplete task without exposing internal run IDs.
+- [x] Use conversation terminology consistently in user-facing interfaces; a new conversation
+  clears the TUI view.
 - [x] Keep prompt submission reliable when Windows terminals collapse modified Enter key events.
+- [x] Give the Planner a compact tool capability catalog without granting it tool-call access; keep
+  candidate tools as soft execution hints.
 
 ### P0-3 Transactional code changes
 

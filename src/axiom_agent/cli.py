@@ -79,9 +79,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     chat_parser = subparsers.add_parser("chat", help="Start a persistent interactive session")
     _common_run_arguments(chat_parser)
+    chat_parser.add_argument(
+        "--conversation", help="Continue an existing conversation ID or unambiguous prefix"
+    )
 
-    resume_parser = subparsers.add_parser("resume", help="Resume a checkpointed run")
-    resume_parser.add_argument("run_id", help="Full run ID or an unambiguous prefix")
+    resume_parser = subparsers.add_parser(
+        "resume", help="Resume the latest checkpointed task in a conversation"
+    )
+    resume_parser.add_argument(
+        "conversation_id", help="Full conversation ID or an unambiguous prefix"
+    )
     resume_parser.add_argument(
         "--retry-uncertain-tools",
         action="store_true",
@@ -129,20 +136,24 @@ def build_parser() -> argparse.ArgumentParser:
         child.add_argument("--config")
         child.add_argument("--workspace")
 
-    runs_parser = subparsers.add_parser("runs", help="Inspect durable execution history")
-    runs_parser.add_argument(
-        "runs_command",
+    conversations_parser = subparsers.add_parser(
+        "conversations", help="Inspect and continue conversation history"
+    )
+    conversations_parser.add_argument(
+        "conversations_command",
         nargs="?",
         choices=("list", "show", "export"),
         default="list",
     )
-    runs_parser.add_argument("run_id", nargs="?")
-    runs_parser.add_argument("--limit", type=int, default=20)
-    runs_parser.add_argument("--status")
-    runs_parser.add_argument("--output", help="JSONL path for 'runs export'")
-    runs_parser.add_argument("--json", action="store_true", dest="json_output")
-    runs_parser.add_argument("--config")
-    runs_parser.add_argument("--workspace")
+    conversations_parser.add_argument("conversation_id", nargs="?")
+    conversations_parser.add_argument("--limit", type=int, default=20)
+    conversations_parser.add_argument("--status")
+    conversations_parser.add_argument(
+        "--output", help="JSONL path for 'conversations export'"
+    )
+    conversations_parser.add_argument("--json", action="store_true", dest="json_output")
+    conversations_parser.add_argument("--config")
+    conversations_parser.add_argument("--workspace")
 
     skills_parser = subparsers.add_parser("skills", help="Discover and inspect skills")
     skills_parser.add_argument(
@@ -201,8 +212,8 @@ async def dispatch(arguments: argparse.Namespace) -> int:
         return _doctor(config)
     if arguments.command == "memory":
         return _memory(config, arguments)
-    if arguments.command == "runs":
-        return _runs(config, arguments)
+    if arguments.command == "conversations":
+        return _conversations(config, arguments)
     if arguments.command == "skills":
         return _skills(config, arguments)
     if arguments.command == "mcp":
@@ -222,13 +233,13 @@ async def dispatch(arguments: argparse.Namespace) -> int:
             _print_result(result, arguments.json_output)
             return 0 if result.success else 2
         if arguments.command == "resume":
-            result = await app.agent.resume(
-                arguments.run_id,
+            result = await app.agent.resume_conversation(
+                arguments.conversation_id,
                 retry_uncertain_tools=arguments.retry_uncertain_tools,
             )
             _print_result(result, arguments.json_output)
             return 0 if result.success else 2
-        return await _chat(app, arguments.json_output)
+        return await _chat(app, arguments.json_output, arguments.conversation)
 
 
 def _init_workspace(path: Path, force: bool) -> int:
@@ -273,19 +284,21 @@ async def _demo(arguments: argparse.Namespace) -> int:
             print(json.dumps(recovery_result.as_dict(), ensure_ascii=False))
         else:
             labels = {
-                "checkpoint_persisted": "Run checkpoint persisted",
+                "checkpoint_persisted": "Task checkpoint persisted",
                 "completed_tool_not_replayed": "Completed tool was not replayed",
                 "uncertain_tool_blocked": "Uncertain tool blocked automatic resume",
                 "explicit_retry_resumed": "Explicit retry resumed successfully",
-                "history_and_metrics_inspectable": "Run history and metrics are inspectable",
+                "history_and_metrics_inspectable": (
+                    "Conversation history and task metrics are inspectable"
+                ),
             }
             for name, passed in recovery_result.checks.items():
                 print(f"[{'PASS' if passed else 'FAIL'}] {labels[name]}")
-            print("\nRun IDs:")
-            for name, run_id in recovery_result.run_ids.items():
-                print(f"  {name:<10} {run_id[:12]}")
-            print("\nInspect in TUI: axiom tui, then choose Runs or press Ctrl+R")
-            print("Inspect in CLI: axiom runs show RUN_ID")
+            print("\nConversation IDs:")
+            for name, conversation_id in recovery_result.conversation_ids.items():
+                print(f"  {name:<10} {conversation_id[:12]}")
+            print("\nInspect in TUI: axiom tui, then choose Conversations or press Ctrl+R")
+            print("Inspect in CLI: axiom conversations show CONVERSATION_ID")
         return 0 if recovery_result.success else 1
 
     config = load_config(workspace=arguments.workspace)
@@ -327,9 +340,19 @@ async def _eval(arguments: argparse.Namespace) -> int:
     return 0 if result.success else 1
 
 
-async def _chat(app: AxiomApp, json_output: bool) -> int:
-    conversation_id: str | None = None
-    print("Axiom chat. Type /exit to leave, /new to start a new run.")
+async def _chat(
+    app: AxiomApp, json_output: bool, conversation_id: str | None = None
+) -> int:
+    if conversation_id is not None:
+        conversation = app.execution.get_conversation(conversation_id)
+        conversation_id = conversation.id
+        if conversation.status != "completed":
+            print(
+                f"Note: the latest task is {conversation.status} and was not resumed. "
+                "Use 'axiom resume CONVERSATION_ID' to recover it.",
+                file=sys.stderr,
+            )
+    print("Axiom chat. Type /exit to leave, /new to start a new conversation.")
     while True:
         try:
             goal = await asyncio.to_thread(input, "you> ")
@@ -339,7 +362,7 @@ async def _chat(app: AxiomApp, json_output: bool) -> int:
             break
         if goal.strip() == "/new":
             conversation_id = None
-            print("Started a new run.")
+            print("Started a new conversation.")
             continue
         if not goal.strip():
             continue
@@ -397,46 +420,45 @@ def _memory(config: AxiomConfig, arguments: argparse.Namespace) -> int:
     return 0
 
 
-def _runs(config: AxiomConfig, arguments: argparse.Namespace) -> int:
+def _conversations(config: AxiomConfig, arguments: argparse.Namespace) -> int:
     store = ExecutionStore(config.execution.path)
     try:
-        if arguments.runs_command == "list":
-            records = store.list_runs(max(1, arguments.limit), arguments.status)
+        if arguments.conversations_command == "list":
+            records = store.list_conversations(max(1, arguments.limit), arguments.status)
             if arguments.json_output:
                 print(json.dumps([record.as_dict() for record in records], ensure_ascii=False))
                 return 0
             if not records:
-                print("No runs recorded.")
+                print("No conversations recorded.")
                 return 0
             for record in records:
-                goal = " ".join(record.goal.split())
-                if len(goal) > 80:
-                    goal = f"{goal[:77]}..."
+                title = " ".join(record.title.split())
+                if len(title) > 70:
+                    title = f"{title[:67]}..."
                 print(
                     f"{record.id[:12]}  {record.status:<11}  "
-                    f"{record.updated_at}  {goal}"
+                    f"tasks={record.execution_count:<3}  {record.updated_at}  {title}"
                 )
             return 0
 
-        if not arguments.run_id:
-            print(f"Usage: axiom runs {arguments.runs_command} RUN_ID", file=sys.stderr)
+        if not arguments.conversation_id:
+            print(
+                "Usage: axiom conversations "
+                f"{arguments.conversations_command} CONVERSATION_ID",
+                file=sys.stderr,
+            )
             return 2
-        if arguments.runs_command == "show":
-            detail = store.detail(arguments.run_id)
+        if arguments.conversations_command == "show":
+            detail = store.conversation_detail(arguments.conversation_id)
             if arguments.json_output:
                 print(json.dumps(detail, ensure_ascii=False))
                 return 0
-            print(f"Run: {detail['id']}")
+            print(f"Conversation: {detail['id']}")
             print(f"Status: {detail['status']}")
-            print(f"Goal: {detail['goal']}")
-            print(f"Conversation: {detail['conversation_id']}")
-            model = detail["context"].get("model", {})
-            if model:
-                print(f"Model: {model.get('provider')}:{model.get('name')}")
-            print(f"Started: {detail['started_at']}")
+            print(f"Title: {detail['title']}")
+            print(f"Tasks: {detail['execution_count']}")
+            print(f"Started: {detail['created_at']}")
             print(f"Updated: {detail['updated_at']}")
-            if detail["error"]:
-                print(f"Error: {detail['error']}")
             print("Metrics:")
             for stage in ("planner", "executor", "finalizer", "total"):
                 metrics = detail["metrics"].get(stage, {})
@@ -445,13 +467,19 @@ def _runs(config: AxiomConfig, arguments: argparse.Namespace) -> int:
                     f"duration_ms={metrics.get('duration_ms', 0)} "
                     f"tokens={metrics.get('total_tokens', 0)}"
                 )
-            plan = detail.get("plan") or {}
-            for step in plan.get("steps", []):
-                print(f"  [{step['status']}] {step['id']}: {step['title']}")
+            print("Tasks:")
+            for execution in detail["executions"]:
+                print(
+                    f"  #{execution['sequence']} [{execution['status']}] "
+                    f"{execution['goal']}"
+                )
+                if execution["error"]:
+                    print(f"    Error: {execution['error']}")
             return 0
 
-        output = Path(arguments.output or f"{arguments.run_id}-events.jsonl").resolve()
-        rows = store.event_rows(arguments.run_id)
+        resolved = store.resolve_conversation_id(arguments.conversation_id)
+        output = Path(arguments.output or f"{resolved}-events.jsonl").resolve()
+        rows = store.conversation_event_rows(resolved)
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(
             "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows),
@@ -535,8 +563,9 @@ def _approval_callback(auto_approve: bool) -> Any:
 
 def _console_observer(event: Event) -> None:
     if event.type in {"agent.started", "agent.resumed"}:
-        action = "resume" if event.type == "agent.resumed" else "run"
-        print(f"[{action}] {event.data.get('run_id')}", file=sys.stderr)
+        action = "resume" if event.type == "agent.resumed" else "task"
+        conversation_id = str(event.data.get("conversation_id", ""))
+        print(f"[{action}] conversation {conversation_id[:12]}", file=sys.stderr)
     elif event.type == "plan.created":
         steps = event.data["plan"]["steps"]
         titles = " -> ".join(item["title"] for item in steps)
@@ -557,7 +586,6 @@ def _print_result(result: Any, json_output: bool) -> None:
                     "output": result.output,
                     "success": result.success,
                     "status": result.status,
-                    "run_id": result.run_id,
                     "conversation_id": result.conversation_id,
                     "plan": result.plan.as_dict(),
                     "usage": result.usage,
@@ -567,7 +595,7 @@ def _print_result(result: Any, json_output: bool) -> None:
             )
         )
     else:
-        print(f"\n{result.output}\n\nRun: {result.run_id}")
+        print(f"\n{result.output}\n\nConversation: {result.conversation_id}")
 
 
 if __name__ == "__main__":

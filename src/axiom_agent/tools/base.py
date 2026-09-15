@@ -93,6 +93,21 @@ class ToolRegistry:
     def schemas(self) -> list[dict[str, Any]]:
         return [tool.schema() for tool in self._tools.values()]
 
+    def planning_catalog(self) -> list[dict[str, Any]]:
+        """Return compact capability metadata without granting tool-call access."""
+        catalog: list[dict[str, Any]] = []
+        for tool in self._tools.values():
+            properties = tool.parameters.get("properties", {})
+            argument_names = list(properties)[:12] if isinstance(properties, dict) else []
+            catalog.append(
+                {
+                    "name": tool.name,
+                    "description": " ".join(tool.description.split())[:300],
+                    "arguments": argument_names,
+                }
+            )
+        return catalog
+
     def names(self) -> list[str]:
         return list(self._tools)
 

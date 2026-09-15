@@ -63,6 +63,31 @@ class RunRecord:
 
 
 @dataclass(slots=True)
+class ConversationRecord:
+    """User-facing conversation summary backed by one or more internal runs."""
+
+    id: str
+    title: str
+    status: str
+    execution_count: int
+    created_at: str
+    updated_at: str
+    latest_goal: str
+    latest_run_id: str
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "title": self.title,
+            "status": self.status,
+            "execution_count": self.execution_count,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "latest_goal": self.latest_goal,
+        }
+
+
+@dataclass(slots=True)
 class StepResumeState:
     history: list[Any] | None = None
     completed_result: str | None = None
@@ -103,6 +128,8 @@ class ExecutionStore:
                 );
                 CREATE INDEX IF NOT EXISTS idx_runs_updated ON runs(updated_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status, updated_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_runs_conversation
+                    ON runs(conversation_id, updated_at DESC);
 
                 CREATE TABLE IF NOT EXISTS plans (
                     id TEXT PRIMARY KEY,
@@ -121,6 +148,8 @@ class ExecutionStore:
                     title TEXT NOT NULL,
                     description TEXT NOT NULL,
                     depends_on TEXT NOT NULL DEFAULT '[]',
+                    required_capabilities TEXT NOT NULL DEFAULT '[]',
+                    candidate_tools TEXT NOT NULL DEFAULT '[]',
                     status TEXT NOT NULL,
                     result TEXT NOT NULL DEFAULT '',
                     error TEXT NOT NULL DEFAULT '',
@@ -200,8 +229,20 @@ class ExecutionStore:
                     created_at TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS idx_execution_events_run ON events(run_id, id);
+                CREATE INDEX IF NOT EXISTS idx_execution_events_conversation
+                    ON events(conversation_id, id);
                 """
             )
+            self._ensure_column("steps", "required_capabilities", "TEXT NOT NULL DEFAULT '[]'")
+            self._ensure_column("steps", "candidate_tools", "TEXT NOT NULL DEFAULT '[]'")
+
+    def _ensure_column(self, table: str, column: str, declaration: str) -> None:
+        columns = {
+            str(row["name"])
+            for row in self._connection.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if column not in columns:
+            self._connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
 
     def create_run(
         self, conversation_id: str, goal: str, context: dict[str, Any]
@@ -231,8 +272,9 @@ class ExecutionStore:
             self._connection.executemany(
                 """INSERT INTO steps(
                     id, run_id, plan_id, step_key, sequence, title, description,
-                    depends_on, status, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    depends_on, required_capabilities, candidate_tools, status,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 [
                     (
                         step_ids[step.id],
@@ -243,6 +285,8 @@ class ExecutionStore:
                         step.title,
                         step.description,
                         _json(step.depends_on),
+                        _json(step.required_capabilities),
+                        _json(step.candidate_tools),
                         step.status,
                         now,
                         now,
@@ -271,6 +315,116 @@ class ExecutionStore:
             rows = self._connection.execute(query, parameters).fetchall()
         return [self._run_from_row(row) for row in rows]
 
+    def list_conversations(
+        self, limit: int = 20, status: str | None = None
+    ) -> list[ConversationRecord]:
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT * FROM runs ORDER BY created_at, rowid"
+            ).fetchall()
+        grouped: dict[str, list[RunRecord]] = {}
+        for row in rows:
+            record = self._run_from_row(row)
+            grouped.setdefault(record.conversation_id, []).append(record)
+        conversations = [self._conversation_from_runs(items) for items in grouped.values()]
+        if status:
+            conversations = [item for item in conversations if item.status == status]
+        conversations.sort(key=lambda item: item.updated_at, reverse=True)
+        return conversations[: max(0, limit)]
+
+    def get_conversation(self, conversation_id_or_prefix: str) -> ConversationRecord:
+        conversation_id = self.resolve_conversation_id(conversation_id_or_prefix)
+        records = self._runs_for_conversation(conversation_id)
+        if not records:  # pragma: no cover - protected by resolve_conversation_id
+            raise KeyError(f"Conversation not found: {conversation_id_or_prefix}")
+        return self._conversation_from_runs(records)
+
+    def latest_run_for_conversation(self, conversation_id_or_prefix: str) -> RunRecord:
+        conversation = self.get_conversation(conversation_id_or_prefix)
+        return self.get_run(conversation.latest_run_id)
+
+    def resolve_conversation_id(self, conversation_id_or_prefix: str) -> str:
+        prefix = conversation_id_or_prefix.strip()
+        if not prefix:
+            raise ValueError("Conversation ID must not be empty")
+        with self._lock:
+            rows = self._connection.execute(
+                """SELECT DISTINCT conversation_id FROM runs
+                WHERE conversation_id LIKE ? ORDER BY conversation_id LIMIT 2""",
+                (f"{prefix}%",),
+            ).fetchall()
+        if not rows:
+            raise KeyError(f"Conversation not found: {prefix}")
+        if len(rows) > 1:
+            raise ValueError(f"Conversation ID prefix is ambiguous: {prefix}")
+        return str(rows[0]["conversation_id"])
+
+    def conversation_detail(self, conversation_id_or_prefix: str) -> dict[str, Any]:
+        conversation = self.get_conversation(conversation_id_or_prefix)
+        records = self._runs_for_conversation(conversation.id, with_plan=True)
+        executions: list[dict[str, Any]] = []
+        aggregate_metrics: dict[str, dict[str, int]] = {}
+        aggregate_usage: dict[str, int] = {}
+        for sequence, record in enumerate(records, 1):
+            detail = self.detail(record.id)
+            metrics = detail.get("metrics", {})
+            _add_nested_counts(aggregate_metrics, metrics)
+            for key, value in detail.get("usage", {}).items():
+                if isinstance(value, int):
+                    aggregate_usage[key] = aggregate_usage.get(key, 0) + value
+            executions.append(
+                {
+                    "sequence": sequence,
+                    "goal": detail["goal"],
+                    "status": detail["status"],
+                    "output": detail["output"],
+                    "error": detail["error"],
+                    "created_at": detail["created_at"],
+                    "updated_at": detail["updated_at"],
+                    "plan": detail.get("plan"),
+                    "metrics": metrics,
+                    "attempts": _without_keys(detail.get("attempts"), {"id"}),
+                    "turns": _without_keys(
+                        detail.get("turns"),
+                        {"id", "step_id", "attempt_id", "response_id"},
+                    ),
+                    "tool_calls": _without_keys(
+                        detail.get("tool_calls"),
+                        {"id", "turn_id", "provider_call_id"},
+                    ),
+                }
+            )
+        payload = conversation.as_dict()
+        payload.update(
+            {
+                "usage": aggregate_usage,
+                "metrics": aggregate_metrics,
+                "executions": executions,
+            }
+        )
+        return payload
+
+    def conversation_event_rows(
+        self, conversation_id_or_prefix: str
+    ) -> list[dict[str, Any]]:
+        conversation_id = self.resolve_conversation_id(conversation_id_or_prefix)
+        with self._lock:
+            rows = self._connection.execute(
+                """SELECT type, data, created_at FROM events
+                WHERE conversation_id = ? OR run_id IN (
+                    SELECT id FROM runs WHERE conversation_id = ?
+                ) ORDER BY id""",
+                (conversation_id, conversation_id),
+            ).fetchall()
+        return [
+            {
+                "type": str(row["type"]),
+                "data": _json_load(row["data"], {}),
+                "timestamp": str(row["created_at"]),
+            }
+            for row in rows
+        ]
+
     def get_run(self, run_id_or_prefix: str, *, with_plan: bool = True) -> RunRecord:
         run_id = self.resolve_run_id(run_id_or_prefix)
         with self._lock:
@@ -297,6 +451,8 @@ class ExecutionStore:
                     title=str(step["title"]),
                     description=str(step["description"]),
                     depends_on=_json_load(step["depends_on"], []),
+                    required_capabilities=_json_load(step["required_capabilities"], []),
+                    candidate_tools=_json_load(step["candidate_tools"], []),
                     status=cast(StepStatus, str(step["status"])),
                     result=str(step["result"]),
                     error=str(step["error"]),
@@ -356,7 +512,7 @@ class ExecutionStore:
             if uncertain_count and not retry_uncertain:
                 blocked_message = (
                     "An interrupted tool call has no recorded outcome; automatic replay could "
-                    "repeat side effects. Inspect the run, then explicitly pass "
+                    "repeat side effects. Inspect the conversation's task history, then pass "
                     "--retry-uncertain-tools if replay is acceptable."
                 )
                 self._connection.execute(
@@ -811,6 +967,33 @@ class ExecutionStore:
             ended_at=str(row["ended_at"]) if row["ended_at"] else None,
         )
 
+    def _runs_for_conversation(
+        self, conversation_id: str, *, with_plan: bool = False
+    ) -> list[RunRecord]:
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT * FROM runs WHERE conversation_id = ? ORDER BY created_at, rowid",
+                (conversation_id,),
+            ).fetchall()
+        records = [self._run_from_row(row) for row in rows]
+        if with_plan:
+            return [self.get_run(record.id) for record in records]
+        return records
+
+    @staticmethod
+    def _conversation_from_runs(records: list[RunRecord]) -> ConversationRecord:
+        latest = max(records, key=lambda item: (item.updated_at, item.created_at))
+        return ConversationRecord(
+            id=latest.conversation_id,
+            title=records[0].goal,
+            status=latest.status,
+            execution_count=len(records),
+            created_at=min(item.created_at for item in records),
+            updated_at=max(item.updated_at for item in records),
+            latest_goal=latest.goal,
+            latest_run_id=latest.id,
+        )
+
     def _update_accounting(self, run_id: str, now: str) -> None:
         metrics = self.metrics(run_id)
         usage = {
@@ -834,6 +1017,28 @@ class SQLiteEventLogger:
 
 def _empty_metrics() -> dict[str, int]:
     return {"model_calls": 0, "failed_calls": 0, "duration_ms": 0}
+
+
+def _add_nested_counts(
+    target: dict[str, dict[str, int]], source: dict[str, Any]
+) -> None:
+    for group, values in source.items():
+        if not isinstance(values, dict):
+            continue
+        aggregate = target.setdefault(str(group), {})
+        for key, value in values.items():
+            if isinstance(value, int):
+                aggregate[str(key)] = aggregate.get(str(key), 0) + value
+
+
+def _without_keys(value: Any, excluded: set[str]) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [
+        {str(key): item for key, item in record.items() if str(key) not in excluded}
+        for record in value
+        if isinstance(record, dict)
+    ]
 
 
 def _json(value: Any) -> str:

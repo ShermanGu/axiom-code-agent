@@ -15,14 +15,14 @@ observers are separate boundaries, so each can be replaced without rewriting the
 ## What works now
 
 - OpenAI Responses API plus Groq, Gemini, OpenRouter, and generic Chat Completions adapters
-- Structured task decomposition with dependency-aware step execution and retries
+- Capability-aware task decomposition with dependency-aware step execution and retries
 - Workspace-scoped file listing, reading, search, creation, and exact replacement
 - Bounded shell execution with network and destructive-command policy checks
 - MCP client support for stdio, Streamable HTTP, and SSE servers
 - `SKILL.md` discovery, automatic routing, explicit `$skill-name` activation, and lazy loading
 - SQLite short-term conversation history, durable memories, hybrid local retrieval, and task episodes
-- Durable SQLite checkpoints for runs, plans, steps, attempts, model turns, and tool calls
-- Safe interrupted-run recovery, explicit terminal states, and per-stage usage/latency metrics
+- Durable SQLite checkpoints for task executions, plans, steps, attempts, model turns, and tool calls
+- Safe interrupted-task recovery, explicit terminal states, and per-stage usage/latency metrics
 - SQLite plus JSONL lifecycle events for model calls, tools, plans, steps, MCP, and outcomes
 - Interactive CLI and TUI, offline demo, diagnostics, memory inspection, and isolated tests
 
@@ -61,7 +61,8 @@ On macOS/Linux, activate with `source .venv/bin/activate` and export the key wit
 ```text
 axiom init [path]                  create .axiom/config.toml
 axiom run "goal"                  execute one task
-axiom chat                        keep a persistent run session
+axiom chat                        keep a persistent conversation
+axiom chat --conversation ID      continue an existing conversation
 axiom tui                         open the full-screen terminal interface
 axiom demo                        run planning -> tool -> memory offline
 axiom demo recovery               verify durable recovery behavior offline
@@ -74,10 +75,10 @@ axiom mcp                         list configured MCP servers
 axiom memory list                 inspect durable memory
 axiom memory search "query"       test memory retrieval
 axiom memory forget MEMORY_ID     delete one memory
-axiom runs                        list durable run history
-axiom runs show RUN_ID            inspect steps, status, and model metrics
-axiom runs export RUN_ID          export one run's events as JSONL
-axiom resume RUN_ID               resume an interrupted or failed run
+axiom conversations               list durable conversation history
+axiom conversations show ID       inspect a conversation's tasks and metrics
+axiom conversations export ID     export one conversation's events as JSONL
+axiom resume ID                    resume its latest interrupted or failed task
 ```
 
 Use `--no-plan` for a direct single-step run. `--yes` approves commands that the configured policy
@@ -92,23 +93,25 @@ axiom tui
 ```
 
 Use `Enter` or `Ctrl+Enter` to send, `Ctrl+J` to insert a new line, `Escape` to stop the active task,
-`Ctrl+N` for a new run, `Ctrl+R` to open run history, `Ctrl+L` to clear the visible transcript, and
-`Ctrl+Q` to exit. Planning, steps, MCP connections, and tool calls appear in the activity pane.
+`Ctrl+N` for a new conversation, `Ctrl+R` to open conversation history, `Ctrl+L` to clear the
+visible transcript, and `Ctrl+Q` to exit. Planning, steps, MCP connections, and tool calls appear in
+the activity pane.
 Commands requiring approval open a modal confirmation; `axiom tui --yes` automatically approves
-ordinary policy-gated commands. Starting a new run clears the transcript and activity pane.
+ordinary policy-gated commands. Starting a new conversation clears the transcript and activity pane.
 
-The **Runs** dialog lists the current workspace's durable history and shows each run's lifecycle,
-steps, attempts, tool calls, and Planner/Executor/Finalizer metrics. **Continue run** restores a
-completed run's saved transcript and context; **Resume run** continues an incomplete execution from
-its checkpoint. You can also explicitly retry a blocked run or export its sanitized events. The
-same actions have direct commands:
+The **Conversations** dialog groups the current workspace's durable history by conversation ID. It
+shows every task in the selected conversation plus lifecycle and Planner/Executor/Finalizer metrics.
+**Continue conversation** restores its transcript and context; when its latest task is incomplete,
+**Resume task** recovers that task from its checkpoint. You can also explicitly retry a
+blocked task or export the conversation's sanitized events. The same actions have direct commands:
 
 ```text
-/runs                 open run history
-/show RUN_ID           open one run's details
-/resume RUN_ID         resume execution, or continue a completed run's context
-/retry RUN_ID          confirm and retry an uncertain tool outcome
-/export RUN_ID         export events under .axiom/exports/
+/conversations                 open conversation history
+/show CONVERSATION_ID          open one conversation's details
+/continue CONVERSATION_ID      restore it and continue with a new prompt
+/resume CONVERSATION_ID        recover its latest incomplete task
+/retry CONVERSATION_ID         confirm and retry an uncertain tool outcome
+/export CONVERSATION_ID        export events under .axiom/exports/
 ```
 
 Uncertain-tool retry always opens a dedicated side-effect warning, even with `axiom tui --yes`.
@@ -116,16 +119,19 @@ Uncertain-tool retry always opens a dedicated side-effect warning, even with `ax
 The TUI updates task state and tool activity in real time. Model text is displayed when each model
 request completes; token-by-token streaming is not yet implemented.
 
-### Durable runs and recovery
+### Durable conversations and task recovery
 
-Every task receives a stable run ID and is checkpointed in `.axiom/runs.db`. Use the first 12
-characters shown by `axiom runs` anywhere a run ID is accepted:
+Every conversation receives a stable conversation ID. Each submitted prompt creates a separate,
+internal task execution so its plan, metrics, and recovery state remain isolated. Users only need
+the conversation ID; use the first 12 characters shown by `axiom conversations` anywhere one is
+accepted:
 
 ```powershell
-axiom runs
-axiom runs show 4f2a09c71d6e
+axiom conversations
+axiom conversations show 4f2a09c71d6e
+axiom chat --conversation 4f2a09c71d6e
 axiom resume 4f2a09c71d6e
-axiom runs export 4f2a09c71d6e --output run-events.jsonl
+axiom conversations export 4f2a09c71d6e --output conversation-events.jsonl
 ```
 
 Run the complete P0-2 acceptance demo without a model key, MCP server, or carefully timed manual
@@ -137,21 +143,21 @@ axiom demo recovery
 
 It verifies that checkpoints persist, completed tools are not replayed, uncertain tool outcomes
 block automatic recovery, explicit retry succeeds, and the resulting history and metrics remain
-inspectable. It also leaves both demo runs in the selected workspace, so you can immediately run
-`axiom tui` and open **Runs** (or press `Ctrl+R`) to inspect and export them.
+inspectable. It also leaves both demo conversations in the selected workspace, so you can
+immediately run `axiom tui` and open **Conversations** (or press `Ctrl+R`) to inspect and export them.
 
 Completed steps and recorded tool outputs are restored rather than replayed. If Axiom stopped while
-a tool was running, its outcome may be unknown; the run becomes `blocked` instead of silently
-repeating the operation. After inspecting the workspace and `axiom runs show`, replay that step only
-when acceptable:
+a tool was running, its outcome may be unknown; the conversation's latest task becomes `blocked`
+instead of silently repeating the operation. After inspecting the workspace and
+`axiom conversations show`, replay that step only when acceptable:
 
 ```powershell
 axiom resume 4f2a09c71d6e --retry-uncertain-tools
 ```
 
-Runs and steps distinguish `failed`, `cancelled`, `interrupted`, `skipped`, and `blocked`. Planner,
+Tasks and steps distinguish `failed`, `cancelled`, `interrupted`, `skipped`, and `blocked`. Planner,
 Executor, and Finalizer model calls, token usage, failures, and latency are reported separately by
-`axiom runs show` and `--json` output.
+`axiom conversations show` and `--json` output.
 
 ## Configuration
 
@@ -280,6 +286,10 @@ Model adapter <--> unified ToolRegistry
    |
 Final synthesis --> conversation history + durable episode + SQLite/JSONL events
 ```
+
+The Planner receives a compact catalog containing tool names, descriptions, and argument names, but
+no callable tools. It records required capabilities and optional candidate-tool hints in each step;
+the Executor receives the complete schemas and remains responsible for every actual tool call.
 
 Read [`docs/architecture.md`](docs/architecture.md) for lifecycle and extension points, and
 [`docs/security.md`](docs/security.md) before granting an agent access to sensitive repositories.

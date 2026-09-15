@@ -34,7 +34,8 @@ For untrusted goals, repositories, skills, or MCP servers:
 5. Review skill instructions and MCP server provenance before enabling them.
 6. Back up or commit important work before autonomous runs.
 
-The event log and run database still contain task text, file-edit arguments, model input/output, and
+The event log and execution database still contain task text, file-edit arguments, model
+input/output, and
 tool output. Treat the `.axiom` directory as sensitive operational data even with credential-pattern
 redaction enabled.
 

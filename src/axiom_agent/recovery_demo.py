@@ -18,14 +18,18 @@ from axiom_agent.types import ModelRequest, ModelResponse, ToolCall
 @dataclass(slots=True)
 class RecoveryDemoResult:
     checks: dict[str, bool]
-    run_ids: dict[str, str]
+    conversation_ids: dict[str, str]
 
     @property
     def success(self) -> bool:
         return all(self.checks.values())
 
     def as_dict(self) -> dict[str, Any]:
-        return {"success": self.success, "checks": self.checks, "run_ids": self.run_ids}
+        return {
+            "success": self.success,
+            "checks": self.checks,
+            "conversation_ids": self.conversation_ids,
+        }
 
 
 class _RecoveryProvider(ModelProvider):
@@ -209,5 +213,8 @@ async def run_recovery_demo(config: AxiomConfig) -> RecoveryDemoResult:
             ),
             "history_and_metrics_inspectable": history_visible,
         },
-        run_ids={"checkpoint": checkpoint_run.id, "uncertain": uncertain_run.id},
+        conversation_ids={
+            "checkpoint": checkpoint_run.conversation_id,
+            "uncertain": uncertain_run.conversation_id,
+        },
     )

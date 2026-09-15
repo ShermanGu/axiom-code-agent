@@ -154,6 +154,22 @@ class Agent:
         finally:
             self._end_active()
 
+    async def resume_conversation(
+        self,
+        conversation_id: str,
+        *,
+        retry_uncertain_tools: bool = False,
+    ) -> AgentResult:
+        """Resume the latest incomplete internal execution for a conversation."""
+        record = self.execution.latest_run_for_conversation(conversation_id)
+        if record.status == "completed":
+            raise ValueError(
+                "The conversation has no incomplete task to resume; continue it with a new prompt."
+            )
+        return await self.resume(
+            record.id, retry_uncertain_tools=retry_uncertain_tools
+        )
+
     def request_cancel(self) -> None:
         """Mark an upcoming task cancellation as explicit rather than environmental."""
 
@@ -277,16 +293,26 @@ class Agent:
         *,
         resuming: bool,
     ) -> TaskPlan:
+        tool_catalog = self.tools.planning_catalog()
+        available_tools = {str(item["name"]) for item in tool_catalog}
         if not self.config.agent.planning:
             return self.planner.fallback_plan(goal)
         if resuming and (text := self.execution.latest_stage_text(run_id, "planner")):
-            return self.planner.parse_response(goal, text)
+            return self.planner.parse_response(
+                goal, text, available_tools=available_tools
+            )
         context = _planner_context(previous_messages, memories, selected_skills)
-        request = self.planner.build_request(goal, context=context)
+        request = self.planner.build_request(
+            goal,
+            context=context,
+            tool_catalog=tool_catalog,
+        )
         response, _turn_id = await self._complete_model(
             run_id, "planner", request, step_id=None, attempt_id=None, turn=1
         )
-        return self.planner.parse_response(goal, response.text)
+        return self.planner.parse_response(
+            goal, response.text, available_tools=available_tools
+        )
 
     async def _execute_with_retries(
         self,

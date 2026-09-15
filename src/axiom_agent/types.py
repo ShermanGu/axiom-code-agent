@@ -66,6 +66,8 @@ class PlanStep:
     title: str
     description: str
     depends_on: list[str] = field(default_factory=list)
+    required_capabilities: list[str] = field(default_factory=list)
+    candidate_tools: list[str] = field(default_factory=list)
     status: StepStatus = "pending"
     result: str = ""
     error: str = ""
@@ -76,6 +78,8 @@ class PlanStep:
             "title": self.title,
             "description": self.description,
             "depends_on": self.depends_on,
+            "required_capabilities": self.required_capabilities,
+            "candidate_tools": self.candidate_tools,
             "status": self.status,
             "result": self.result,
             "error": self.error,

@@ -20,21 +20,22 @@ registry, MCP manager, approval context, event bus, planner, and agent.
 
 For each `Agent.run(goal)` call:
 
-1. Create or reopen a conversation, persist the user goal, and allocate a stable run ID.
+1. Create or reopen a conversation, persist the user goal, and allocate an internal execution ID.
 2. Snapshot recent messages, ranked memories, and selected skills for deterministic recovery.
-3. Ask the planner for JSON. Validate IDs and dependencies; fall back to one safe step on malformed
-   output.
+3. Give the planner a compact tool capability catalog without callable tools, then ask it for JSON.
+   Validate IDs and dependencies; fall back to one safe step on malformed output.
 4. Persist the plan and steps, then checkpoint each attempt and model turn before it starts.
 5. Pick a ready step, construct bounded context, and call the provider with unified tool schemas.
 6. Checkpoint every tool before and after execution. Parallelize only fully `parallel_safe` batches.
 7. Append native function-call outputs to the model input and continue until the step returns text.
 8. Retry failures, mark terminal status, and skip steps whose dependencies did not complete.
 9. Return a one-step result directly or synthesize multiple results without tools.
-10. Persist the answer, episode, run outcome, stage-level metrics, and lifecycle events.
+10. Persist the answer, episode, execution outcome, stage-level metrics, and lifecycle events.
 
-`axiom resume RUN_ID` reconstructs the plan and the latest model input from SQLite. Completed steps
-and known tool results are retained. An interrupted tool with no recorded outcome blocks automatic
-replay; only `--retry-uncertain-tools` explicitly accepts that side-effect risk.
+`axiom resume CONVERSATION_ID` resolves the conversation's latest task and reconstructs its plan and
+latest model input from SQLite. Completed steps and known tool results are retained. An interrupted
+tool with no recorded outcome blocks automatic replay; only `--retry-uncertain-tools` explicitly
+accepts that side-effect risk.
 
 ## Core contracts
 
@@ -42,7 +43,7 @@ replay; only `--retry-uncertain-tools` explicitly accepts that side-effect risk.
 - `Tool.run(arguments, ToolContext) -> JSON-compatible value`
 - `TaskPlan` / `PlanStep` for scheduler interchange
 - `SQLiteMemoryStore` conversation and durable-memory methods
-- `ExecutionStore` durable run, checkpoint, event, and accounting methods
+- `ExecutionStore` durable conversation/task checkpoint, event, and accounting methods
 - `EventBus.emit(type, data)` for observers
 
 The internal model input-item representation follows the Responses API because it preserves native
