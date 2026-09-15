@@ -2,18 +2,27 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import tempfile
 import unittest
 from collections.abc import Callable
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-from textual.widgets import Button
+from textual.css.query import NoMatches
+from textual.widgets import Button, RichLog, Static
 
 from axiom_agent.cli import build_parser
 from axiom_agent.config import AxiomConfig
-from axiom_agent.events import EventBus
+from axiom_agent.events import Event, EventBus
+from axiom_agent.execution.store import ExecutionStore
 from axiom_agent.tools.base import ApprovalCallback
-from axiom_agent.tui import ApprovalScreen, AxiomTUI, PromptArea
+from axiom_agent.tui import (
+    ApprovalScreen,
+    AxiomTUI,
+    ConversationHistoryScreen,
+    PromptArea,
+)
 
 
 async def _wait_for(
@@ -25,7 +34,12 @@ async def _wait_for(
 ) -> None:
     try:
         async with asyncio.timeout(timeout_seconds):
-            while not condition():
+            while True:
+                try:
+                    if condition():
+                        return
+                except NoMatches:
+                    pass
                 await pilot.pause(0.05)
     except TimeoutError as exc:
         raise AssertionError(f"Timed out waiting for {description}") from exc
@@ -37,6 +51,7 @@ class _FakeAgent:
         self.require_approval = require_approval
         self.approve: ApprovalCallback | None = None
         self.goals: list[tuple[str, str | None]] = []
+        self.resumes: list[tuple[str, bool]] = []
         self.approved: bool | None = None
 
     async def run(self, goal: str, *, conversation_id: str | None = None) -> Any:
@@ -57,11 +72,39 @@ class _FakeAgent:
             usage={"input_tokens": 12},
         )
 
+    async def resume_conversation(
+        self, conversation_id: str, *, retry_uncertain_tools: bool = False
+    ) -> Any:
+        self.resumes.append((conversation_id, retry_uncertain_tools))
+        self.events.emit("agent.resumed", conversation_id=conversation_id)
+        return SimpleNamespace(
+            output=f"Recovered: {conversation_id[:12]}",
+            conversation_id=conversation_id,
+            success=True,
+            usage={"input_tokens": 4},
+        )
+
+
+class _FakeMemory:
+    def __init__(self, messages: dict[str, list[dict[str, Any]]] | None = None) -> None:
+        self.messages = messages or {}
+
+    def recent_messages(self, conversation_id: str, limit: int) -> list[dict[str, Any]]:
+        return self.messages.get(conversation_id, [])[-limit:]
+
 
 class _FakeBackend:
-    def __init__(self, *, require_approval: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        require_approval: bool = False,
+        execution: ExecutionStore | None = None,
+        memory: _FakeMemory | None = None,
+    ) -> None:
         self.events = EventBus()
         self.agent = _FakeAgent(self.events, require_approval=require_approval)
+        self.execution = execution
+        self.memory = memory or _FakeMemory()
         self.closed = False
 
     async def start(self) -> _FakeBackend:
@@ -69,6 +112,8 @@ class _FakeBackend:
         return self
 
     async def close(self) -> None:
+        if self.execution is not None:
+            self.execution.close()
         self.closed = True
 
 
@@ -93,7 +138,7 @@ class TUITests(unittest.TestCase):
                 prompt = app.query_one("#prompt", PromptArea)
                 self.assertFalse(prompt.disabled)
                 prompt.load_text("inspect this workspace")
-                prompt.action_submit()
+                await pilot.press("ctrl+enter")
                 await _wait_for(
                     pilot,
                     lambda: not app.busy and len(list(app.query(".assistant"))) == 1,
@@ -102,8 +147,72 @@ class TUITests(unittest.TestCase):
                 self.assertEqual(backend.agent.goals, [("inspect this workspace", None)])
                 self.assertEqual(app.conversation_id, "conversation-1")
                 self.assertEqual(len(list(app.query(".assistant"))), 1)
+                self.assertIn(
+                    "Completed • conversation",
+                    str(app.query_one("#status", Static).content),
+                )
                 self.assertFalse(app.busy)
             self.assertTrue(backend.closed)
+
+        asyncio.run(scenario())
+
+    def test_enter_sends_and_ctrl_j_inserts_a_newline(self) -> None:
+        async def scenario() -> None:
+            backend = _FakeBackend()
+
+            def factory(_config: AxiomConfig, approve: ApprovalCallback) -> _FakeBackend:
+                backend.agent.approve = approve
+                return backend
+
+            app = AxiomTUI(AxiomConfig(), backend_factory=factory)
+            async with app.run_test(size=(120, 40)) as pilot:
+                await _wait_for(pilot, lambda: app.ready, "TUI startup")
+                prompt = app.query_one("#prompt", PromptArea)
+                prompt.load_text("first line")
+                prompt.move_cursor((0, len("first line")))
+                await pilot.press("ctrl+j")
+                self.assertEqual(prompt.text, "first line\n")
+                self.assertEqual(backend.agent.goals, [])
+                await pilot.press("enter")
+                await _wait_for(
+                    pilot,
+                    lambda: backend.agent.goals == [("first line", None)] and not app.busy,
+                    "Enter submission",
+                )
+
+        asyncio.run(scenario())
+
+    def test_new_conversation_clears_transcript_activity_and_context(self) -> None:
+        async def scenario() -> None:
+            backend = _FakeBackend()
+
+            def factory(_config: AxiomConfig, approve: ApprovalCallback) -> _FakeBackend:
+                backend.agent.approve = approve
+                return backend
+
+            app = AxiomTUI(AxiomConfig(), backend_factory=factory)
+            async with app.run_test(size=(120, 40)) as pilot:
+                await _wait_for(pilot, lambda: app.ready, "TUI startup")
+                prompt = app.query_one("#prompt", PromptArea)
+                prompt.load_text("inspect this workspace")
+                await pilot.press("enter")
+                await _wait_for(pilot, lambda: not app.busy, "first run")
+                self.assertEqual(app.conversation_id, "conversation-1")
+                self.assertTrue(list(app.query(".assistant")))
+                self.assertTrue(app.query_one("#activity", RichLog).lines)
+
+                await pilot.press("ctrl+n")
+                await _wait_for(
+                    pilot,
+                    lambda: app.conversation_id is None and not list(app.query(".assistant")),
+                    "new conversation reset",
+                )
+                self.assertFalse(list(app.query(".user")))
+                self.assertFalse(app.query_one("#activity", RichLog).lines)
+                self.assertEqual(prompt.text, "")
+                systems = list(app.query(".system"))
+                self.assertEqual(len(systems), 1)
+                self.assertIn("Started a new conversation", str(systems[0].content))
 
         asyncio.run(scenario())
 
@@ -137,6 +246,287 @@ class TUITests(unittest.TestCase):
                 )
                 self.assertTrue(backend.agent.approved)
                 self.assertFalse(app.busy)
+
+        asyncio.run(scenario())
+
+    def test_conversation_history_shows_details_exports_and_resumes(self) -> None:
+        async def scenario() -> None:
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                store = ExecutionStore(root / ".axiom" / "runs.db")
+                run_id = store.create_run("conversation-old", "Recover an interrupted task", {})
+                store.record_event(Event("agent.started", {"run_id": run_id}))
+                store.interrupt_run(run_id, "interrupted", "Task interrupted")
+                backend = _FakeBackend(execution=store)
+                config = AxiomConfig()
+                config.workspace.root = root
+
+                def factory(_config: AxiomConfig, approve: ApprovalCallback) -> _FakeBackend:
+                    backend.agent.approve = approve
+                    return backend
+
+                app = AxiomTUI(config, backend_factory=factory)
+                async with app.run_test(size=(140, 44)) as pilot:
+                    await _wait_for(pilot, lambda: app.ready, "TUI startup")
+                    await pilot.click("#conversations")
+                    await _wait_for(
+                        pilot,
+                        lambda: isinstance(app.screen, ConversationHistoryScreen),
+                        "conversation history screen",
+                    )
+                    await _wait_for(
+                        pilot,
+                        lambda: "Recover an interrupted task"
+                        in str(
+                            app.screen.query_one("#conversation-detail", Static).content
+                        ),
+                        "selected conversation details",
+                    )
+                    screen = app.screen
+                    self.assertIsInstance(screen, ConversationHistoryScreen)
+                    detail = screen.query_one("#conversation-detail", Static)
+                    self.assertIn("Recover an interrupted task", str(detail.content))
+                    self.assertNotIn(run_id[:12], str(detail.content))
+                    self.assertFalse(
+                        screen.query_one("#conversation-resume", Button).disabled
+                    )
+                    self.assertFalse(
+                        screen.query_one("#conversation-open", Button).disabled
+                    )
+
+                    await pilot.click("#conversation-export")
+                    output = (
+                        root
+                        / ".axiom"
+                        / "exports"
+                        / "conversation-old-events.jsonl"
+                    )
+                    self.assertTrue(output.is_file())
+                    self.assertIn("agent.started", output.read_text(encoding="utf-8"))
+
+                    await pilot.click("#conversation-open")
+                    await _wait_for(
+                        pilot,
+                        lambda: app.conversation_id == "conversation-old"
+                        and not isinstance(app.screen, ConversationHistoryScreen),
+                        "conversation switch without task recovery",
+                    )
+                    self.assertEqual(backend.agent.resumes, [])
+
+                    await pilot.press("ctrl+r")
+                    await _wait_for(
+                        pilot,
+                        lambda: isinstance(app.screen, ConversationHistoryScreen),
+                        "conversation history reopened",
+                    )
+                    await pilot.click("#conversation-resume")
+                    await _wait_for(
+                        pilot,
+                        lambda: backend.agent.resumes
+                        == [("conversation-old", False)]
+                        and not app.busy,
+                        "run recovery",
+                    )
+                    self.assertEqual(app.conversation_id, "conversation-old")
+                    await pilot.press("ctrl+r")
+                    await _wait_for(
+                        pilot,
+                        lambda: isinstance(app.screen, ConversationHistoryScreen),
+                        "Ctrl+R conversation history shortcut",
+                    )
+                    await pilot.press("escape")
+
+        asyncio.run(scenario())
+
+    def test_blocked_conversation_requires_confirmation_before_retry(self) -> None:
+        async def scenario() -> None:
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                store = ExecutionStore(root / ".axiom" / "runs.db")
+                run_id = store.create_run("conversation-blocked", "Retry uncertain tool", {})
+                store.finish_run(run_id, "blocked", error="Tool outcome is unknown")
+                backend = _FakeBackend(execution=store)
+                config = AxiomConfig()
+                config.workspace.root = root
+
+                def factory(_config: AxiomConfig, approve: ApprovalCallback) -> _FakeBackend:
+                    backend.agent.approve = approve
+                    return backend
+
+                app = AxiomTUI(config, auto_approve=True, backend_factory=factory)
+                async with app.run_test(size=(140, 44)) as pilot:
+                    await _wait_for(pilot, lambda: app.ready, "TUI startup")
+                    await pilot.click("#conversations")
+                    await _wait_for(
+                        pilot,
+                        lambda: isinstance(app.screen, ConversationHistoryScreen),
+                        "conversation history screen",
+                    )
+                    await _wait_for(
+                        pilot,
+                        lambda: not app.screen.query_one(
+                            "#conversation-retry", Button
+                        ).disabled,
+                        "blocked conversation actions",
+                    )
+                    screen = app.screen
+                    self.assertIsInstance(screen, ConversationHistoryScreen)
+                    self.assertTrue(
+                        screen.query_one("#conversation-resume", Button).disabled
+                    )
+                    self.assertFalse(
+                        screen.query_one("#conversation-open", Button).disabled
+                    )
+                    self.assertFalse(
+                        screen.query_one("#conversation-retry", Button).disabled
+                    )
+                    await pilot.click("#conversation-retry")
+                    await _wait_for(
+                        pilot,
+                        lambda: isinstance(app.screen, ApprovalScreen),
+                        "uncertain retry confirmation",
+                    )
+                    self.assertEqual(backend.agent.resumes, [])
+                    await pilot.click("#allow")
+                    await _wait_for(
+                        pilot,
+                        lambda: backend.agent.resumes
+                        == [("conversation-blocked", True)]
+                        and not app.busy,
+                        "confirmed blocked-conversation retry",
+                    )
+
+        asyncio.run(scenario())
+
+    def test_completed_conversation_restores_context_for_the_next_prompt(self) -> None:
+        async def scenario() -> None:
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                store = ExecutionStore(root / ".axiom" / "runs.db")
+                first_run = store.create_run("conversation-old", "Original goal", {})
+                store.finish_run(first_run, "completed", output="Original answer")
+                follow_up_run = store.create_run("conversation-old", "Prior follow-up", {})
+                store.finish_run(follow_up_run, "completed", output="Prior follow-up answer")
+                memory = _FakeMemory(
+                    {
+                        "conversation-old": [
+                            {"role": "user", "content": "Original goal"},
+                            {"role": "assistant", "content": "Original answer"},
+                            {"role": "user", "content": "Prior follow-up"},
+                            {
+                                "role": "assistant",
+                                "content": "Prior follow-up answer",
+                            },
+                        ]
+                    }
+                )
+                backend = _FakeBackend(execution=store, memory=memory)
+                config = AxiomConfig()
+                config.workspace.root = root
+
+                def factory(_config: AxiomConfig, approve: ApprovalCallback) -> _FakeBackend:
+                    backend.agent.approve = approve
+                    return backend
+
+                app = AxiomTUI(config, backend_factory=factory)
+                async with app.run_test(size=(140, 44)) as pilot:
+                    await _wait_for(pilot, lambda: app.ready, "TUI startup")
+                    await pilot.click("#conversations")
+                    await _wait_for(
+                        pilot,
+                        lambda: isinstance(app.screen, ConversationHistoryScreen),
+                        "conversation history screen",
+                    )
+                    await _wait_for(
+                        pilot,
+                        lambda: not app.screen.query_one(
+                            "#conversation-open", Button
+                        ).disabled,
+                        "completed conversation action",
+                    )
+                    self.assertEqual(
+                        app.screen.query_one("#conversation-table").row_count, 1
+                    )
+                    self.assertIn(
+                        "Tasks         2",
+                        str(
+                            app.screen.query_one("#conversation-detail", Static).content
+                        ),
+                    )
+                    continuation = app.screen.query_one("#conversation-open", Button)
+                    self.assertEqual(str(continuation.label), "Continue")
+                    self.assertFalse(continuation.disabled)
+                    self.assertTrue(
+                        app.screen.query_one("#conversation-resume", Button).disabled
+                    )
+                    await pilot.click("#conversation-open")
+                    await _wait_for(
+                        pilot,
+                        lambda: app.conversation_id == "conversation-old"
+                        and not isinstance(app.screen, ConversationHistoryScreen),
+                        "completed conversation context",
+                    )
+                    self.assertEqual(backend.agent.resumes, [])
+                    self.assertIn("Original goal", str(app.query_one(".user", Static).content))
+
+                    prompt = app.query_one("#prompt", PromptArea)
+                    prompt.load_text("Follow up")
+                    await pilot.press("enter")
+                    await _wait_for(
+                        pilot, lambda: not app.busy, "continued conversation prompt"
+                    )
+                    self.assertEqual(backend.agent.goals, [("Follow up", "conversation-old")])
+
+        asyncio.run(scenario())
+
+    def test_slash_commands_offer_direct_export_and_continuation(self) -> None:
+        async def scenario() -> None:
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                store = ExecutionStore(root / ".axiom" / "runs.db")
+                run_id = store.create_run("conversation-command", "Resume by command", {})
+                store.record_event(Event("agent.started", {"run_id": run_id}))
+                store.interrupt_run(run_id, "interrupted", "Task interrupted")
+                backend = _FakeBackend(execution=store)
+                config = AxiomConfig()
+                config.workspace.root = root
+
+                def factory(_config: AxiomConfig, approve: ApprovalCallback) -> _FakeBackend:
+                    backend.agent.approve = approve
+                    return backend
+
+                app = AxiomTUI(config, backend_factory=factory)
+                async with app.run_test(size=(120, 40)) as pilot:
+                    await _wait_for(pilot, lambda: app.ready, "TUI startup")
+                    prompt = app.query_one("#prompt", PromptArea)
+                    prompt.load_text("/show conversation-command")
+                    prompt.action_submit()
+                    await _wait_for(
+                        pilot,
+                        lambda: isinstance(app.screen, ConversationHistoryScreen),
+                        "slash-command conversation details",
+                    )
+                    await pilot.press("escape")
+
+                    prompt.load_text("/export conversation-command")
+                    prompt.action_submit()
+                    output = (
+                        root
+                        / ".axiom"
+                        / "exports"
+                        / "conversation-command-events.jsonl"
+                    )
+                    await _wait_for(pilot, output.is_file, "slash-command event export")
+
+                    prompt.load_text("/resume conversation-command")
+                    prompt.action_submit()
+                    await _wait_for(
+                        pilot,
+                        lambda: backend.agent.resumes
+                        == [("conversation-command", False)]
+                        and not app.busy,
+                        "slash-command recovery",
+                    )
 
         asyncio.run(scenario())
 

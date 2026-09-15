@@ -39,6 +39,8 @@ class ConfigTests(unittest.TestCase):
 root = "."
 [memory]
 path = ".axiom/custom.db"
+[execution]
+path = ".axiom/custom-runs.db"
 [skills]
 paths = ["skills", ".axiom/skills"]
 """,
@@ -47,6 +49,9 @@ paths = ["skills", ".axiom/skills"]
             config = load_config(config_path)
             self.assertEqual(config.workspace.root, workspace.resolve())
             self.assertEqual(config.memory.path, (workspace / ".axiom/custom.db").resolve())
+            self.assertEqual(
+                config.execution.path, (workspace / ".axiom/custom-runs.db").resolve()
+            )
             self.assertEqual(config.skills.paths[0], (workspace / "skills").resolve())
 
     def test_workspace_override_is_a_path(self) -> None:

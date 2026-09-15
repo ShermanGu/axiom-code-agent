@@ -30,6 +30,10 @@ path = ".axiom/memory.db"
 recent_messages = 12
 retrieval_limit = 8
 
+[execution]
+# Durable run checkpoints, status history, model metrics, and SQLite events.
+path = ".axiom/runs.db"
+
 [skills]
 paths = [".axiom/skills", "examples/skills"]
 auto_select = true

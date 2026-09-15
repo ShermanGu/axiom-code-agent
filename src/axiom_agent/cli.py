@@ -13,6 +13,7 @@ from typing import Any
 from axiom_agent.app import AxiomApp
 from axiom_agent.config import AxiomConfig, load_config
 from axiom_agent.events import Event
+from axiom_agent.execution.store import ExecutionStore
 from axiom_agent.memory.store import SQLiteMemoryStore
 from axiom_agent.providers.demo import DemoProvider
 from axiom_agent.skills.loader import SkillRegistry
@@ -45,6 +46,9 @@ path = ".axiom/memory.db"
 recent_messages = 12
 retrieval_limit = 8
 
+[execution]
+path = ".axiom/runs.db"
+
 [skills]
 paths = [".axiom/skills"]
 auto_select = true
@@ -62,7 +66,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="axiom", description="A modular code agent with MCP, skills, planning, and memory."
     )
-    parser.add_argument("--version", action="version", version="Axiom 0.4.1")
+    parser.add_argument("--version", action="version", version="Axiom 0.5.0")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     init_parser = subparsers.add_parser("init", help="Initialize Axiom in a workspace")
@@ -75,6 +79,22 @@ def build_parser() -> argparse.ArgumentParser:
 
     chat_parser = subparsers.add_parser("chat", help="Start a persistent interactive session")
     _common_run_arguments(chat_parser)
+    chat_parser.add_argument(
+        "--conversation", help="Continue an existing conversation ID or unambiguous prefix"
+    )
+
+    resume_parser = subparsers.add_parser(
+        "resume", help="Resume the latest checkpointed task in a conversation"
+    )
+    resume_parser.add_argument(
+        "conversation_id", help="Full conversation ID or an unambiguous prefix"
+    )
+    resume_parser.add_argument(
+        "--retry-uncertain-tools",
+        action="store_true",
+        help="Explicitly replay a step whose interrupted tool outcome is unknown",
+    )
+    _common_run_arguments(resume_parser)
 
     tui_parser = subparsers.add_parser("tui", help="Start the full-screen terminal interface")
     tui_parser.add_argument("--config")
@@ -83,6 +103,13 @@ def build_parser() -> argparse.ArgumentParser:
     tui_parser.add_argument("--yes", action="store_true", help="Approve policy-gated commands")
 
     demo_parser = subparsers.add_parser("demo", help="Run an offline end-to-end demo")
+    demo_parser.add_argument(
+        "scenario",
+        nargs="?",
+        choices=("workspace", "recovery"),
+        default="workspace",
+        help="Demo scenario to run (default: workspace)",
+    )
     demo_parser.add_argument("--workspace", default=".")
     demo_parser.add_argument("--json", action="store_true", dest="json_output")
 
@@ -108,6 +135,25 @@ def build_parser() -> argparse.ArgumentParser:
     for child in (memory_list, memory_search, memory_forget):
         child.add_argument("--config")
         child.add_argument("--workspace")
+
+    conversations_parser = subparsers.add_parser(
+        "conversations", help="Inspect and continue conversation history"
+    )
+    conversations_parser.add_argument(
+        "conversations_command",
+        nargs="?",
+        choices=("list", "show", "export"),
+        default="list",
+    )
+    conversations_parser.add_argument("conversation_id", nargs="?")
+    conversations_parser.add_argument("--limit", type=int, default=20)
+    conversations_parser.add_argument("--status")
+    conversations_parser.add_argument(
+        "--output", help="JSONL path for 'conversations export'"
+    )
+    conversations_parser.add_argument("--json", action="store_true", dest="json_output")
+    conversations_parser.add_argument("--config")
+    conversations_parser.add_argument("--workspace")
 
     skills_parser = subparsers.add_parser("skills", help="Discover and inspect skills")
     skills_parser.add_argument(
@@ -166,6 +212,8 @@ async def dispatch(arguments: argparse.Namespace) -> int:
         return _doctor(config)
     if arguments.command == "memory":
         return _memory(config, arguments)
+    if arguments.command == "conversations":
+        return _conversations(config, arguments)
     if arguments.command == "skills":
         return _skills(config, arguments)
     if arguments.command == "mcp":
@@ -184,7 +232,14 @@ async def dispatch(arguments: argparse.Namespace) -> int:
             result = await app.agent.run(" ".join(arguments.goal))
             _print_result(result, arguments.json_output)
             return 0 if result.success else 2
-        return await _chat(app, arguments.json_output)
+        if arguments.command == "resume":
+            result = await app.agent.resume_conversation(
+                arguments.conversation_id,
+                retry_uncertain_tools=arguments.retry_uncertain_tools,
+            )
+            _print_result(result, arguments.json_output)
+            return 0 if result.success else 2
+        return await _chat(app, arguments.json_output, arguments.conversation)
 
 
 def _init_workspace(path: Path, force: bool) -> int:
@@ -197,7 +252,13 @@ def _init_workspace(path: Path, force: bool) -> int:
     (config_dir / "skills").mkdir(exist_ok=True)
     config_path.write_text(DEFAULT_CONFIG, encoding="utf-8", newline="")
     gitignore = workspace / ".gitignore"
-    ignore_lines = [".axiom/config.toml", ".axiom/memory.db*", ".axiom/events.jsonl"]
+    ignore_lines = [
+        ".axiom/config.toml",
+        ".axiom/memory.db*",
+        ".axiom/runs.db*",
+        ".axiom/events.jsonl",
+        ".axiom/exports/",
+    ]
     existing = gitignore.read_text(encoding="utf-8") if gitignore.exists() else ""
     additions = [line for line in ignore_lines if line not in existing.splitlines()]
     if additions:
@@ -213,6 +274,33 @@ def _init_workspace(path: Path, force: bool) -> int:
 
 
 async def _demo(arguments: argparse.Namespace) -> int:
+    if arguments.scenario == "recovery":
+        from axiom_agent.recovery_demo import run_recovery_demo
+
+        recovery_result = await run_recovery_demo(
+            load_config(workspace=arguments.workspace)
+        )
+        if arguments.json_output:
+            print(json.dumps(recovery_result.as_dict(), ensure_ascii=False))
+        else:
+            labels = {
+                "checkpoint_persisted": "Task checkpoint persisted",
+                "completed_tool_not_replayed": "Completed tool was not replayed",
+                "uncertain_tool_blocked": "Uncertain tool blocked automatic resume",
+                "explicit_retry_resumed": "Explicit retry resumed successfully",
+                "history_and_metrics_inspectable": (
+                    "Conversation history and task metrics are inspectable"
+                ),
+            }
+            for name, passed in recovery_result.checks.items():
+                print(f"[{'PASS' if passed else 'FAIL'}] {labels[name]}")
+            print("\nConversation IDs:")
+            for name, conversation_id in recovery_result.conversation_ids.items():
+                print(f"  {name:<10} {conversation_id[:12]}")
+            print("\nInspect in TUI: axiom tui, then choose Conversations or press Ctrl+R")
+            print("Inspect in CLI: axiom conversations show CONVERSATION_ID")
+        return 0 if recovery_result.success else 1
+
     config = load_config(workspace=arguments.workspace)
     config.model.provider = "demo"
     config.agent.planning = True
@@ -252,9 +340,19 @@ async def _eval(arguments: argparse.Namespace) -> int:
     return 0 if result.success else 1
 
 
-async def _chat(app: AxiomApp, json_output: bool) -> int:
-    conversation_id: str | None = None
-    print("Axiom chat. Type /exit to leave, /new to start a new memory thread.")
+async def _chat(
+    app: AxiomApp, json_output: bool, conversation_id: str | None = None
+) -> int:
+    if conversation_id is not None:
+        conversation = app.execution.get_conversation(conversation_id)
+        conversation_id = conversation.id
+        if conversation.status != "completed":
+            print(
+                f"Note: the latest task is {conversation.status} and was not resumed. "
+                "Use 'axiom resume CONVERSATION_ID' to recover it.",
+                file=sys.stderr,
+            )
+    print("Axiom chat. Type /exit to leave, /new to start a new conversation.")
     while True:
         try:
             goal = await asyncio.to_thread(input, "you> ")
@@ -320,6 +418,78 @@ def _memory(config: AxiomConfig, arguments: argparse.Namespace) -> int:
     finally:
         store.close()
     return 0
+
+
+def _conversations(config: AxiomConfig, arguments: argparse.Namespace) -> int:
+    store = ExecutionStore(config.execution.path)
+    try:
+        if arguments.conversations_command == "list":
+            records = store.list_conversations(max(1, arguments.limit), arguments.status)
+            if arguments.json_output:
+                print(json.dumps([record.as_dict() for record in records], ensure_ascii=False))
+                return 0
+            if not records:
+                print("No conversations recorded.")
+                return 0
+            for record in records:
+                title = " ".join(record.title.split())
+                if len(title) > 70:
+                    title = f"{title[:67]}..."
+                print(
+                    f"{record.id[:12]}  {record.status:<11}  "
+                    f"tasks={record.execution_count:<3}  {record.updated_at}  {title}"
+                )
+            return 0
+
+        if not arguments.conversation_id:
+            print(
+                "Usage: axiom conversations "
+                f"{arguments.conversations_command} CONVERSATION_ID",
+                file=sys.stderr,
+            )
+            return 2
+        if arguments.conversations_command == "show":
+            detail = store.conversation_detail(arguments.conversation_id)
+            if arguments.json_output:
+                print(json.dumps(detail, ensure_ascii=False))
+                return 0
+            print(f"Conversation: {detail['id']}")
+            print(f"Status: {detail['status']}")
+            print(f"Title: {detail['title']}")
+            print(f"Tasks: {detail['execution_count']}")
+            print(f"Started: {detail['created_at']}")
+            print(f"Updated: {detail['updated_at']}")
+            print("Metrics:")
+            for stage in ("planner", "executor", "finalizer", "total"):
+                metrics = detail["metrics"].get(stage, {})
+                print(
+                    f"  {stage:<9} calls={metrics.get('model_calls', 0)} "
+                    f"duration_ms={metrics.get('duration_ms', 0)} "
+                    f"tokens={metrics.get('total_tokens', 0)}"
+                )
+            print("Tasks:")
+            for execution in detail["executions"]:
+                print(
+                    f"  #{execution['sequence']} [{execution['status']}] "
+                    f"{execution['goal']}"
+                )
+                if execution["error"]:
+                    print(f"    Error: {execution['error']}")
+            return 0
+
+        resolved = store.resolve_conversation_id(arguments.conversation_id)
+        output = Path(arguments.output or f"{resolved}-events.jsonl").resolve()
+        rows = store.conversation_event_rows(resolved)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(
+            "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows),
+            encoding="utf-8",
+            newline="",
+        )
+        print(f"Exported {len(rows)} event(s) to {output}")
+        return 0
+    finally:
+        store.close()
 
 
 def _skills(config: AxiomConfig, arguments: argparse.Namespace) -> int:
@@ -392,7 +562,11 @@ def _approval_callback(auto_approve: bool) -> Any:
 
 
 def _console_observer(event: Event) -> None:
-    if event.type == "plan.created":
+    if event.type in {"agent.started", "agent.resumed"}:
+        action = "resume" if event.type == "agent.resumed" else "task"
+        conversation_id = str(event.data.get("conversation_id", ""))
+        print(f"[{action}] conversation {conversation_id[:12]}", file=sys.stderr)
+    elif event.type == "plan.created":
         steps = event.data["plan"]["steps"]
         titles = " -> ".join(item["title"] for item in steps)
         print(f"[plan] {len(steps)} step(s): {titles}", file=sys.stderr)
@@ -411,15 +585,17 @@ def _print_result(result: Any, json_output: bool) -> None:
                 {
                     "output": result.output,
                     "success": result.success,
+                    "status": result.status,
                     "conversation_id": result.conversation_id,
                     "plan": result.plan.as_dict(),
                     "usage": result.usage,
+                    "metrics": result.metrics,
                 },
                 ensure_ascii=False,
             )
         )
     else:
-        print(f"\n{result.output}")
+        print(f"\n{result.output}\n\nConversation: {result.conversation_id}")
 
 
 if __name__ == "__main__":

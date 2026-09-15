@@ -43,7 +43,7 @@ class JsonlEventLogger:
 
     def __call__(self, event: Event) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        payload = _sanitize(asdict(event))
+        payload = sanitize(asdict(event))
         with self._lock, self.path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(payload, ensure_ascii=False, default=str) + "\n")
 
@@ -56,18 +56,18 @@ SECRET_TEXT = re.compile(
 )
 
 
-def _sanitize(value: Any, *, key: str = "") -> Any:
+def sanitize(value: Any, *, key: str = "") -> Any:
     if SECRET_KEY.search(key):
         return "***REDACTED***"
     if isinstance(value, dict):
         return {
-            str(item_key): _sanitize(item, key=str(item_key))
+            str(item_key): sanitize(item, key=str(item_key))
             for item_key, item in value.items()
         }
     if isinstance(value, list):
-        return [_sanitize(item) for item in value]
+        return [sanitize(item) for item in value]
     if isinstance(value, tuple):
-        return [_sanitize(item) for item in value]
+        return [sanitize(item) for item in value]
     if isinstance(value, str):
         redacted = SECRET_TEXT.sub(
             lambda match: (match.group(1) or match.group(2) or "") + "***REDACTED***",

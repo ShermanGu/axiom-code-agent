@@ -11,5 +11,7 @@ build/
 .env
 .axiom/config.toml
 .axiom/memory.db*
+.axiom/runs.db*
 .axiom/events.jsonl
 .axiom/evals/
+.axiom/exports/

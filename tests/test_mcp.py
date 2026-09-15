@@ -95,6 +95,14 @@ class MCPManagerTests(unittest.TestCase):
             registry = ToolRegistry()
             await manager.connect(registry)
             self.assertIn("mcp__demo__echo", registry.names())
+            self.assertIn(
+                {
+                    "name": "mcp__demo__echo",
+                    "description": "MCP server demo: Echo text",
+                    "arguments": ["text"],
+                },
+                registry.planning_catalog(),
+            )
             result = await registry.execute(
                 ToolCall("call_1", "mcp__demo__echo", {"text": "hello"}),
                 ToolContext(Path.cwd(), events),

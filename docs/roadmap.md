@@ -7,12 +7,17 @@ opening a new milestone and link it from this document.
 
 ## Current milestone
 
-- [`v0.4.1`](releases/v0.4.1.md) — P0-1 Windows MCP and Skill CLI hardening (completed)
+- [`v0.5.0`](releases/v0.5.0.md) — P0-2 durable execution and recovery (completed)
 
 ## P0 — Reliable single-agent kernel
 
 Exit condition: Axiom can inspect, edit, test, recover, and report evidence on small and medium
 repositories without silently losing state or overwriting unrelated user work.
+
+Every milestone requires an **Interface Impact Review**. Any user-facing capability must be
+implemented and tested across every affected supported interface, including CLI and TUI. A release
+may defer an interface only when its tracker names the missing surface, explains why, and assigns it
+to a later milestone; an unrecorded interface gap does not count as completed work.
 
 ### P0-1 Evaluation baseline
 
@@ -30,11 +35,24 @@ repositories without silently losing state or overwriting unrelated user work.
 
 ### P0-2 Durable execution and recovery
 
-- [ ] Persist runs, plans, steps, attempts, turns, and tool calls with stable IDs.
-- [ ] Checkpoint every state transition and resume an interrupted run safely.
-- [ ] Distinguish failed, cancelled, interrupted, skipped, and blocked states.
-- [ ] Connect EventBus to the SQLite event store while retaining JSONL export.
-- [ ] Account for Planner, Executor, and Finalizer model usage and latency.
+- [x] Persist internal task executions, plans, steps, attempts, turns, and tool calls with stable IDs.
+- [x] Checkpoint every state transition and resume an interrupted task safely.
+- [x] Distinguish failed, cancelled, interrupted, skipped, and blocked states.
+- [x] Connect EventBus to the SQLite event store while retaining JSONL export.
+- [x] Account for Planner, Executor, and Finalizer model usage and latency.
+- [x] Expose conversation history, task details, metrics, continuation, uncertain retry, and event
+  export in the TUI.
+- [x] Add Conversations, `Ctrl+R`, and direct `/conversations`, `/show`, `/continue`, `/resume`,
+  `/retry`, and `/export` commands.
+- [x] Keep uncertain-tool replay behind an explicit TUI warning even when `--yes` is enabled.
+- [x] Add a one-command offline recovery demo and TUI acceptance coverage.
+- [x] Group multiple task executions under a user-facing conversation ID; let users switch,
+  continue, and safely recover the latest incomplete task without exposing internal run IDs.
+- [x] Use conversation terminology consistently in user-facing interfaces; a new conversation
+  clears the TUI view.
+- [x] Keep prompt submission reliable when Windows terminals collapse modified Enter key events.
+- [x] Give the Planner a compact tool capability catalog without granting it tool-call access; keep
+  candidate tools as soft execution hints.
 
 ### P0-3 Transactional code changes
 

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "axiom-code-agent"
-version = "0.4.1"
+version = "0.5.0"
 description = "A modular, memoryful Python code agent with MCP and skills support."
 readme = "README.md"
 requires-python = ">=3.11"
